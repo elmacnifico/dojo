@@ -1,0 +1,172 @@
+// Package proxy implements the HTTP and Postgres interceptors for Dojo.
+package proxy
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"strings"
+
+	"dojo/pkg/dojo"
+)
+
+// HTTPProxy represents the true HTTP Proxy that intercepts traffic, resolves mocks,
+// and forwards unknown traffic to the real internet.
+type HTTPProxy struct {
+	addr       string
+	listener   net.Listener
+	mux        *http.ServeMux
+	server     *http.Server
+	matchTable dojo.MatchTable
+	log        *slog.Logger
+}
+
+// SetLogger configures the structured logger for the proxy.
+func (p *HTTPProxy) SetLogger(l *slog.Logger) {
+	p.log = l
+}
+
+// NewHTTPProxy initializes a new HTTPProxy.
+func NewHTTPProxy() *HTTPProxy {
+	return &HTTPProxy{
+		mux: http.NewServeMux(),
+		log: slog.Default(),
+	}
+}
+
+// Listen implements the dojo.Adapter interface.
+func (p *HTTPProxy) Listen(ctx context.Context, matchTable dojo.MatchTable) error {
+	return p.Start(ctx, "127.0.0.1:0", matchTable)
+}
+
+// Trigger is a no-op for HTTPProxy.
+func (p *HTTPProxy) Trigger(ctx context.Context, payload []byte, endpointConfig map[string]any) error {
+	return nil
+}
+
+// Start boots the HTTP Proxy listener. The provided context controls the server lifecycle;
+// when it is cancelled the server initiates a graceful shutdown.
+func (p *HTTPProxy) Start(ctx context.Context, listenAddr string, matchTable dojo.MatchTable) error {
+	p.matchTable = matchTable
+	p.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// 1. Read the raw request body to extract the correlation ID
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+			return
+		}
+		// Restore body for any downstream forwarding
+		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		if p.matchTable == nil {
+			http.Error(w, "MatchTable not initialized", http.StatusInternalServerError)
+			return
+		}
+
+		pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+		if len(pathParts) == 0 || pathParts[0] == "" {
+			http.Error(w, "Invalid proxy path", http.StatusBadRequest)
+			return
+		}
+		apiName := pathParts[0]
+
+		m := p.matchTable.ProcessRequest("http", apiName, bodyBytes)
+		if m.Err != nil {
+			http.Error(w, m.Err.Error(), http.StatusBadGateway)
+			return
+		}
+
+		if m.IsMock {
+			w.Header().Set("Content-Type", "application/json")
+			if m.MockCode == 0 {
+				m.MockCode = 200
+			}
+			w.WriteHeader(m.MockCode)
+			if _, err := w.Write(m.MockResponse); err != nil {
+				p.log.Warn("mock response write failed", "error", err)
+			}
+			return
+		}
+
+		if m.DestURL == "" {
+			http.Error(w, "API not found in suite or missing dest URL", http.StatusNotFound)
+			return
+		}
+
+		realPath := "/" + strings.Join(pathParts[1:], "/")
+		target := strings.TrimRight(m.DestURL, "/") + realPath
+
+		proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
+		if err != nil {
+			http.Error(w, "Failed to create proxy request", http.StatusInternalServerError)
+			return
+		}
+
+		for k, vv := range r.Header {
+			for _, v := range vv {
+				proxyReq.Header.Add(k, v)
+			}
+		}
+		for k, v := range m.Headers {
+			proxyReq.Header.Set(k, v)
+		}
+
+		client := &http.Client{}
+		resp, err := client.Do(proxyReq)
+		if err != nil {
+			http.Error(w, "Failed to call external API", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		for k, vv := range resp.Header {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+
+		respBuf := new(bytes.Buffer)
+		respTee := io.TeeReader(resp.Body, respBuf)
+		if _, copyErr := io.Copy(w, respTee); copyErr != nil {
+			return
+		}
+
+		if m.MatchedID != "" {
+			p.matchTable.ProcessResponse("http", m.MatchedID, apiName, bodyBytes, respBuf.Bytes())
+		}
+	})
+
+	l, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		return fmt.Errorf("http proxy listen on %s: %w", listenAddr, err)
+	}
+	p.listener = l
+	p.addr = l.Addr().String()
+
+	p.server = &http.Server{Handler: p.mux}
+
+	go p.server.Serve(p.listener)
+	go func() {
+		<-ctx.Done()
+		p.server.Close()
+	}()
+	return nil
+}
+
+// Stop gracefully shuts down the proxy.
+func (p *HTTPProxy) Stop() error {
+	if p.server != nil {
+		return p.server.Close()
+	}
+	return nil
+}
+
+// Addr returns the proxy's active listen address.
+func (p *HTTPProxy) Addr() string {
+	return p.addr
+}

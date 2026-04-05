@@ -1,0 +1,9 @@
+{
+  "messaging_product": "whatsapp",
+  "recipient_type": "individual",
+  "to": "+1234567890",
+  "type": "text",
+  "text": {
+    "body": "Hello! How can I help you today?"
+  }
+}

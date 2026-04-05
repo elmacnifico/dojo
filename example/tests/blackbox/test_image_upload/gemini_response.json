@@ -1,0 +1,17 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [{ "text": "{\"description\":\"A small red square image.\"}" }],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 15,
+    "candidatesTokenCount": 12,
+    "totalTokenCount": 27
+  },
+  "modelVersion": "gemini-2.5-flash-001"
+}

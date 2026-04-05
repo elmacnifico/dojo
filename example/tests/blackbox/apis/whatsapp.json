@@ -1,0 +1,8 @@
+{
+  "mode": "mock",
+  "url": "/v1/messages",
+  "default_response": {
+    "code": 200,
+    "body": "{\"messaging_product\":\"whatsapp\",\"messages\":[{\"id\":\"wamid.test\"}]}"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "{\"reply\":\"Profile updated successfully.\",\"context\":{\"conversation\":{\"turn_id\":\"t_003\",\"metadata\":{\"routing\":{\"resolved_user\":{\"user_id\":\"usr_77\",\"lookup_source\":\"profile_update\"}}}}}}"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 130,
+    "candidatesTokenCount": 70,
+    "totalTokenCount": 200
+  },
+  "modelVersion": "gemini-2.5-flash-001"
+}

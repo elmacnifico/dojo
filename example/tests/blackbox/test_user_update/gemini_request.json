@@ -1,0 +1,19 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Update my profile"
+        }
+      ]
+    }
+  ],
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "You are a routing assistant. Resolve queries for user usr_77."
+      }
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "{\"reply\":\"Welcome! Your account has been created.\",\"context\":{\"conversation\":{\"turn_id\":\"t_002\",\"metadata\":{\"routing\":{\"resolved_user\":{\"user_id\":\"usr_99\",\"lookup_source\":\"registration\"}}}}}}"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 120,
+    "candidatesTokenCount": 65,
+    "totalTokenCount": 185
+  },
+  "modelVersion": "gemini-2.5-flash-001"
+}

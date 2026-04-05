@@ -1,0 +1,19 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Delete my account"
+        }
+      ]
+    }
+  ],
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "You are a routing assistant. Resolve queries for user usr_55."
+      }
+    ]
+  }
+}

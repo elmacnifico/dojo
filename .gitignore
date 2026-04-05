@@ -1,0 +1,30 @@
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Compiled binary
+dojo
+
+# Test outputs
+coverage.out
+results/
+
+# OS specific
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+
+# Editor directories and files
+.idea
+.vscode
+*.swp
+*.swo
+
+# Vendor directory
+vendor/

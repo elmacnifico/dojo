@@ -1,0 +1,28 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "{\"reply\":\"Hello! How can I help you today?\",\"context\":{\"conversation\":{\"turn_id\":\"t_001\",\"metadata\":{\"routing\":{\"resolved_user\":{\"user_id\":\"usr_42\",\"lookup_source\":\"phone_directory\"}}}}}}"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "avgLogprobs": -0.0842,
+      "safetyRatings": [
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "probability": "NEGLIGIBLE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "probability": "NEGLIGIBLE"},
+        {"category": "HARM_CATEGORY_HARASSMENT", "probability": "NEGLIGIBLE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "probability": "NEGLIGIBLE"}
+      ]
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 156,
+    "candidatesTokenCount": 87,
+    "totalTokenCount": 243
+  },
+  "modelVersion": "gemini-2.5-flash-001"
+}

@@ -1,0 +1,1 @@
+UPDATE users SET display_name = 'Jane' WHERE phone_number = '+1112223333'

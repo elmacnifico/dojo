@@ -1,0 +1,21 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "{\"reply\":\"Your account has been deactivated.\",\"context\":{\"conversation\":{\"turn_id\":\"t_004\",\"metadata\":{\"routing\":{\"resolved_user\":{\"user_id\":\"usr_55\",\"lookup_source\":\"deactivation\"}}}}}}"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 140,
+    "candidatesTokenCount": 72,
+    "totalTokenCount": 212
+  },
+  "modelVersion": "gemini-2.5-flash-001"
+}

@@ -1,0 +1,279 @@
+package main
+
+import (
+	"bytes"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"time"
+
+	_ "github.com/lib/pq"
+)
+
+type triggerRequest struct {
+	PhoneNumber string `json:"phone_number"`
+	UserID      string `json:"user_id"`
+	Message     string `json:"message"`
+	Action      string `json:"action"`
+	DisplayName string `json:"display_name"`
+}
+
+// Gemini request types.
+
+type geminiPart struct {
+	Text string `json:"text"`
+}
+
+type geminiContent struct {
+	Role  string       `json:"role"`
+	Parts []geminiPart `json:"parts"`
+}
+
+type geminiSystemInstruction struct {
+	Parts []geminiPart `json:"parts"`
+}
+
+type geminiGenerationConfig struct {
+	Temperature      float64 `json:"temperature"`
+	TopP             float64 `json:"topP"`
+	TopK             int     `json:"topK"`
+	MaxOutputTokens  int     `json:"maxOutputTokens"`
+	ResponseMIMEType string  `json:"responseMimeType"`
+}
+
+type geminiSafetySetting struct {
+	Category  string `json:"category"`
+	Threshold string `json:"threshold"`
+}
+
+type geminiRequest struct {
+	Contents          []geminiContent        `json:"contents"`
+	SystemInstruction geminiSystemInstruction `json:"systemInstruction"`
+	GenerationConfig  geminiGenerationConfig  `json:"generationConfig"`
+	SafetySettings    []geminiSafetySetting  `json:"safetySettings"`
+}
+
+// Gemini response types (for parsing the mock response).
+
+type geminiResponse struct {
+	Candidates []struct {
+		Content struct {
+			Parts []geminiPart `json:"parts"`
+		} `json:"content"`
+	} `json:"candidates"`
+}
+
+// WhatsApp Business API request types.
+
+type whatsappTextBody struct {
+	Body string `json:"body"`
+}
+
+type whatsappMessage struct {
+	MessagingProduct string           `json:"messaging_product"`
+	RecipientType    string           `json:"recipient_type"`
+	To               string           `json:"to"`
+	Type             string           `json:"type"`
+	Text             whatsappTextBody `json:"text"`
+}
+
+func buildGeminiRequest(userID, message string) geminiRequest {
+	return geminiRequest{
+		Contents: []geminiContent{
+			{Role: "user", Parts: []geminiPart{{Text: message}}},
+		},
+		SystemInstruction: geminiSystemInstruction{
+			Parts: []geminiPart{{Text: fmt.Sprintf(
+				"You are a routing assistant. Resolve queries for user %s.", userID)}},
+		},
+		GenerationConfig: geminiGenerationConfig{
+			Temperature:      0.7,
+			TopP:             0.95,
+			TopK:             40,
+			MaxOutputTokens:  1024,
+			ResponseMIMEType: "application/json",
+		},
+		SafetySettings: []geminiSafetySetting{
+			{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+			{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+			{Category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+			{Category: "HARM_CATEGORY_DANGEROUS_CONTENT", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+		},
+	}
+}
+
+func main() {
+	http.HandleFunc("/trigger", handleTrigger)
+	http.HandleFunc("/upload", handleUpload)
+
+	port := ":8080"
+	fmt.Printf("[SUT] Starting server on %s\n", port)
+	if err := http.ListenAndServe(port, nil); err != nil {
+		fmt.Printf("[SUT] Server crashed: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func handleTrigger(w http.ResponseWriter, r *http.Request) {
+	var req triggerRequest
+	body, _ := io.ReadAll(r.Body)
+	if err := json.Unmarshal(body, &req); err != nil || req.PhoneNumber == "" {
+		http.Error(w, "missing phone_number", 400)
+		return
+	}
+
+	action := req.Action
+	if action == "" {
+		action = "lookup"
+	}
+	fmt.Printf("[SUT] action=%s phone=%s\n", action, req.PhoneNumber)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	pgURL := os.Getenv("API_POSTGRES_URL")
+	db, err := sql.Open("postgres", pgURL)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("db open: %v", err), 500)
+		return
+	}
+	defer db.Close()
+
+	userID := req.UserID
+
+	switch action {
+	case "lookup":
+		q := fmt.Sprintf("SELECT user_id FROM users WHERE phone_number = '%s'", req.PhoneNumber)
+		if err := db.QueryRow(q).Scan(&userID); err != nil {
+			fmt.Printf("[SUT] SELECT failed: %v\n", err)
+		}
+	case "register":
+		q := fmt.Sprintf("INSERT INTO users (user_id, phone_number) VALUES ('%s', '%s')", userID, req.PhoneNumber)
+		if _, err := db.Exec(q); err != nil {
+			fmt.Printf("[SUT] INSERT failed: %v\n", err)
+		}
+	case "update":
+		q := fmt.Sprintf("UPDATE users SET display_name = '%s' WHERE phone_number = '%s'", req.DisplayName, req.PhoneNumber)
+		if _, err := db.Exec(q); err != nil {
+			fmt.Printf("[SUT] UPDATE failed: %v\n", err)
+		}
+	case "deactivate":
+		q := fmt.Sprintf("DELETE FROM users WHERE phone_number = '%s'", req.PhoneNumber)
+		if _, err := db.Exec(q); err != nil {
+			fmt.Printf("[SUT] DELETE failed: %v\n", err)
+		}
+	}
+
+	// Step 2: Call Gemini and read the response.
+	replyText := "No response"
+	geminiURL := os.Getenv("API_GEMINI_URL")
+	if geminiURL != "" {
+		greq := buildGeminiRequest(userID, req.Message)
+		payload, err := json.Marshal(greq)
+		if err == nil {
+			target := geminiURL + "/v1beta/models/gemini-2.5-flash:generateContent"
+			resp, err := client.Post(target, "application/json", bytes.NewReader(payload))
+			if err == nil {
+				respBody, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+
+				var gr geminiResponse
+				if json.Unmarshal(respBody, &gr) == nil &&
+					len(gr.Candidates) > 0 &&
+					len(gr.Candidates[0].Content.Parts) > 0 {
+					var inner struct {
+						Reply string `json:"reply"`
+					}
+					if json.Unmarshal([]byte(gr.Candidates[0].Content.Parts[0].Text), &inner) == nil && inner.Reply != "" {
+						replyText = inner.Reply
+					}
+				}
+			}
+		}
+	}
+
+	// Step 3: Forward the LLM reply to the user via WhatsApp.
+	whatsappURL := os.Getenv("API_WHATSAPP_URL")
+	if whatsappURL != "" {
+		waMsg := whatsappMessage{
+			MessagingProduct: "whatsapp",
+			RecipientType:    "individual",
+			To:               req.PhoneNumber,
+			Type:             "text",
+			Text:             whatsappTextBody{Body: replyText},
+		}
+		payload, err := json.Marshal(waMsg)
+		if err == nil {
+			target := whatsappURL + "/v1/messages"
+			resp, err := client.Post(target, "application/json", bytes.NewReader(payload))
+			if err == nil {
+				resp.Body.Close()
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	w.Write([]byte(fmt.Sprintf(`{"status":"ok","user_id":"%s"}`, userID)))
+}
+
+func handleUpload(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	fmt.Printf("[SUT] /upload received %d bytes\n", len(body))
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	greq := geminiRequest{
+		Contents: []geminiContent{
+			{Role: "user", Parts: []geminiPart{{Text: "Describe this uploaded image"}}},
+		},
+		SystemInstruction: geminiSystemInstruction{
+			Parts: []geminiPart{{Text: "You are a vision assistant. Analyse uploaded images."}},
+		},
+		GenerationConfig: geminiGenerationConfig{
+			Temperature:      0.7,
+			TopP:             0.95,
+			TopK:             40,
+			MaxOutputTokens:  1024,
+			ResponseMIMEType: "application/json",
+		},
+		SafetySettings: []geminiSafetySetting{
+			{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+			{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+			{Category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+			{Category: "HARM_CATEGORY_DANGEROUS_CONTENT", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+		},
+	}
+
+	description := "unknown"
+	geminiURL := os.Getenv("API_GEMINI_URL")
+	if geminiURL != "" {
+		payload, err := json.Marshal(greq)
+		if err == nil {
+			target := geminiURL + "/v1beta/models/gemini-2.5-flash:generateContent"
+			resp, err := client.Post(target, "application/json", bytes.NewReader(payload))
+			if err == nil {
+				respBody, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+
+				var gr geminiResponse
+				if json.Unmarshal(respBody, &gr) == nil &&
+					len(gr.Candidates) > 0 &&
+					len(gr.Candidates[0].Content.Parts) > 0 {
+					var inner struct {
+						Description string `json:"description"`
+					}
+					if json.Unmarshal([]byte(gr.Candidates[0].Content.Parts[0].Text), &inner) == nil && inner.Description != "" {
+						description = inner.Description
+					}
+				}
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	w.Write([]byte(fmt.Sprintf(`{"status":"ok","description":"%s"}`, description)))
+}

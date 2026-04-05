@@ -1,0 +1,5 @@
+Perform -> entrypoints/webhook -> Payload: incoming.json
+
+Expect -> postgres -> Request: postgres_request.sql
+Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.json
+Expect -> whatsapp -> Request: whatsapp_request.json
