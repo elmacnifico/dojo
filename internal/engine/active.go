@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"sync"
 
 	"dojo/internal/workspace"
@@ -19,6 +20,7 @@ type ActiveTest struct {
 	ID           string
 	Test         *workspace.Test
 	Suite        *workspace.Suite
+	Ctx          context.Context
 	Expectations map[string]*Expectation
 	mu           sync.Mutex
 	done         chan struct{}

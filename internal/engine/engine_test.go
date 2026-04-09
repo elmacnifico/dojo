@@ -15,20 +15,9 @@ import (
 	"time"
 
 	"dojo/internal/engine"
-	"dojo/internal/proxy"
+	"dojo/internal/testutil"
 	"dojo/internal/workspace"
 )
-
-func createFile(t *testing.T, baseDir, path, content string) {
-	t.Helper()
-	fullPath := filepath.Join(baseDir, path)
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-		t.Fatalf("Failed to create dirs for %s: %v", path, err)
-	}
-	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to write file %s: %v", path, err)
-	}
-}
 
 func TestEngineExecution(t *testing.T) {
 	sutServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +44,7 @@ func TestEngineExecution(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	createFile(t, tmpDir, "test_suite/apis/stripe.json", `{
+	testutil.CreateFile(t, tmpDir, "test_suite/apis/stripe.json", `{
 		"mode": "mock",
 		"timeout": "5s",
 		"url": "/v1/charge",
@@ -68,9 +57,9 @@ func TestEngineExecution(t *testing.T) {
 		}
 	}`)
 	
-	createFile(t, tmpDir, "test_suite/dojo.config", `{"concurrency": 2}`)
+	testutil.CreateFile(t, tmpDir, "test_suite/dojo.config", `{"concurrency": 2}`)
 	
-	createFile(t, tmpDir, "test_suite/entrypoints/webhook.json", `{
+	testutil.CreateFile(t, tmpDir, "test_suite/entrypoints/webhook.json", `{
 		"type": "http",
 		"path": "/trigger",
 		"url": "`+sutServer.URL+`",
@@ -79,11 +68,11 @@ func TestEngineExecution(t *testing.T) {
 		}
 	}`)
 
-	createFile(t, tmpDir, "test_suite/test_001/test.plan", `
+	testutil.CreateFile(t, tmpDir, "test_suite/test_001/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
 Expect -> stripe -> Payload: ""
 `)
-	createFile(t, tmpDir, "test_suite/test_001/incoming.json", `{"order_id": "ord_123"}`)
+	testutil.CreateFile(t, tmpDir, "test_suite/test_001/incoming.json", `{"order_id": "ord_123"}`)
 
 	ws, err := workspace.LoadWorkspace(tmpDir)
 	if err != nil {
@@ -91,7 +80,7 @@ Expect -> stripe -> Payload: ""
 	}
 
 	eng := engine.NewEngine(ws)
-	eng.RegisterAdapter(proxy.NewHTTPInitiator())
+
 
 	if err := eng.StartProxies(context.Background(), "test_suite"); err != nil {
 		t.Fatalf("Failed to start proxies: %v", err)
@@ -157,7 +146,7 @@ func TestEngineLiveHTTPExpectedResponse(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	createFile(t, tmpDir, "test_suite/apis/stripe.json", `{
+	testutil.CreateFile(t, tmpDir, "test_suite/apis/stripe.json", `{
 		"mode": "live",
 		"timeout": "5s",
 		"url": "`+upstream.URL+`",
@@ -169,9 +158,9 @@ func TestEngineLiveHTTPExpectedResponse(t *testing.T) {
 		}
 	}`)
 
-	createFile(t, tmpDir, "test_suite/dojo.config", `{"concurrency": 2}`)
+	testutil.CreateFile(t, tmpDir, "test_suite/dojo.config", `{"concurrency": 2}`)
 
-	createFile(t, tmpDir, "test_suite/entrypoints/webhook.json", `{
+	testutil.CreateFile(t, tmpDir, "test_suite/entrypoints/webhook.json", `{
 		"type": "http",
 		"path": "/trigger",
 		"url": "`+sutServer.URL+`",
@@ -180,11 +169,11 @@ func TestEngineLiveHTTPExpectedResponse(t *testing.T) {
 		}
 	}`)
 
-	createFile(t, tmpDir, "test_suite/test_001/test.plan", `
+	testutil.CreateFile(t, tmpDir, "test_suite/test_001/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
 Expect -> stripe -> Payload: ""
 `)
-	createFile(t, tmpDir, "test_suite/test_001/incoming.json", `{"order_id": "ord_123"}`)
+	testutil.CreateFile(t, tmpDir, "test_suite/test_001/incoming.json", `{"order_id": "ord_123"}`)
 
 	ws, err := workspace.LoadWorkspace(tmpDir)
 	if err != nil {
@@ -192,7 +181,7 @@ Expect -> stripe -> Payload: ""
 	}
 
 	eng := engine.NewEngine(ws)
-	eng.RegisterAdapter(proxy.NewHTTPInitiator())
+
 
 	if err := eng.StartProxies(context.Background(), "test_suite"); err != nil {
 		t.Fatalf("Failed to start proxies: %v", err)
@@ -258,25 +247,25 @@ func TestRegistryCleanupAfterTest(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	createFile(t, tmpDir, "test_suite/apis/stripe.json", `{
+	testutil.CreateFile(t, tmpDir, "test_suite/apis/stripe.json", `{
 		"mode": "mock",
 		"timeout": "5s",
 		"url": "/v1/charge",
 		"expected_request": {"body": "{\"order_id\": \"ord_cleanup\"}"},
 		"default_response": {"code": 200, "body": "{\"status\": \"success\"}"}
 	}`)
-	createFile(t, tmpDir, "test_suite/dojo.config", `{"concurrency": 1}`)
-	createFile(t, tmpDir, "test_suite/entrypoints/webhook.json", `{
+	testutil.CreateFile(t, tmpDir, "test_suite/dojo.config", `{"concurrency": 1}`)
+	testutil.CreateFile(t, tmpDir, "test_suite/entrypoints/webhook.json", `{
 		"type": "http",
 		"path": "/trigger",
 		"url": "`+sutServer.URL+`",
 		"expected_response": {"body": "{\"status\": \"ok\"}"}
 	}`)
-	createFile(t, tmpDir, "test_suite/test_001/test.plan", `
+	testutil.CreateFile(t, tmpDir, "test_suite/test_001/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
 Expect -> stripe -> Payload: ""
 `)
-	createFile(t, tmpDir, "test_suite/test_001/incoming.json", `{"order_id": "ord_cleanup"}`)
+	testutil.CreateFile(t, tmpDir, "test_suite/test_001/incoming.json", `{"order_id": "ord_cleanup"}`)
 
 	ws, err := workspace.LoadWorkspace(tmpDir)
 	if err != nil {
@@ -284,7 +273,7 @@ Expect -> stripe -> Payload: ""
 	}
 
 	eng := engine.NewEngine(ws)
-	eng.RegisterAdapter(proxy.NewHTTPInitiator())
+
 
 	if err := eng.StartProxies(context.Background(), "test_suite"); err != nil {
 		t.Fatalf("start proxies: %v", err)
@@ -463,9 +452,14 @@ func TestProcessResponse_HTTPLiveMismatch(t *testing.T) {
 	eng.Registry.Register("t1", active)
 
 	eng.ProcessResponse("http", "t1", "ext", nil, []byte(`{"data":"wrong"}`))
-	// On HTTP mismatch, ProcessResponse does NOT mark fulfilled — waits for a matching response.
-	if active.Expectations["ext"].Fulfilled {
-		t.Error("expected NOT fulfilled on mismatch")
+	if !active.Expectations["ext"].Fulfilled {
+		t.Error("expected fulfilled (with error) on mismatch")
+	}
+	if active.Expectations["ext"].Error == nil {
+		t.Fatal("expected MismatchError on mismatch, got nil")
+	}
+	if !strings.Contains(active.Expectations["ext"].Error.Error(), "live response mismatch") {
+		t.Errorf("expected 'live response mismatch' in error, got: %v", active.Expectations["ext"].Error)
 	}
 }
 
@@ -631,24 +625,24 @@ func TestEngineImplicitCorrelation(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	createFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
-	createFile(t, tmpDir, "suite/apis/notify.json", `{
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+	testutil.CreateFile(t, tmpDir, "suite/apis/notify.json", `{
 		"mode": "mock",
 		"url": "/v1/send",
 		"default_response": {"code": 200, "body": "{\"ok\":true}"}
 	}`)
-	createFile(t, tmpDir, "suite/entrypoints/webhook.json", fmt.Sprintf(`{
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", fmt.Sprintf(`{
 		"type": "http",
 		"path": "/trigger",
 		"url": "%s"
 	}`, sutServer.URL))
 
-	createFile(t, tmpDir, "suite/test_correlate/test.plan", `
+	testutil.CreateFile(t, tmpDir, "suite/test_correlate/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
 Expect -> notify
 `)
-	createFile(t, tmpDir, "suite/test_correlate/incoming.json", `{"order_id":"ord_100"}`)
-	createFile(t, tmpDir, "suite/test_correlate/apis/notify.json", `{
+	testutil.CreateFile(t, tmpDir, "suite/test_correlate/incoming.json", `{"order_id":"ord_100"}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_correlate/apis/notify.json", `{
 		"expected_request": {"body": "{\"customer\":\"cust_42\",\"message\":\"done\"}"}
 	}`)
 
@@ -658,7 +652,7 @@ Expect -> notify
 	}
 
 	eng := engine.NewEngine(ws)
-	eng.RegisterAdapter(proxy.NewHTTPInitiator())
+
 
 	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
 		t.Fatalf("StartProxies: %v", err)
@@ -788,10 +782,11 @@ func TestProcessRequest_LiveHTTPEvalDefersToResponse(t *testing.T) {
 	}
 }
 
-// TestProcessResponse_HTTPLiveEvalNoExpectedResponse verifies that for live HTTP
-// APIs with RequiresEval and no ExpectedResponse, ProcessResponse evaluates the
-// response payload and marks the expectation fulfilled.
-func TestProcessResponse_HTTPLiveEvalNoExpectedResponse(t *testing.T) {
+// TestProcessResponse_HTTPLiveEvalFailsWithoutConfig verifies that for live HTTP
+// APIs with RequiresEval and no evaluator config, ProcessResponse still marks the
+// expectation as fulfilled (done) but records a non-nil error because the AI
+// evaluation cannot run without a configured provider.
+func TestProcessResponse_HTTPLiveEvalFailsWithoutConfig(t *testing.T) {
 	t.Parallel()
 	suite := &workspace.Suite{
 		APIs: map[string]workspace.APIConfig{
@@ -812,7 +807,13 @@ func TestProcessResponse_HTTPLiveEvalNoExpectedResponse(t *testing.T) {
 
 	eng.ProcessResponse("http", "t1", "gemini", nil, []byte(`{"candidates":[{"content":"response"}]}`))
 	if !active.Expectations["gemini"].Fulfilled {
-		t.Error("expected gemini expectation fulfilled via eval (no ExpectedResponse)")
+		t.Error("expected gemini expectation to be marked fulfilled (done)")
+	}
+	if active.Expectations["gemini"].Error == nil {
+		t.Fatal("expected non-nil error because evaluator config is missing")
+	}
+	if got := active.Expectations["gemini"].Error.Error(); !strings.Contains(got, "no eval.md rule found") {
+		t.Errorf("unexpected error message: %s", got)
 	}
 }
 
@@ -880,13 +881,13 @@ func TestBinaryFixturePayload(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	createFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
-	createFile(t, tmpDir, "suite/entrypoints/upload.json", fmt.Sprintf(`{
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/upload.json", fmt.Sprintf(`{
 		"type": "http",
 		"path": "/upload",
 		"url": %q
 	}`, sutServer.URL))
-	createFile(t, tmpDir, "suite/apis/vision.json", `{
+	testutil.CreateFile(t, tmpDir, "suite/apis/vision.json", `{
 		"mode": "mock",
 		"url": "/v1/analyze",
 		"default_response": {"code": 200, "body": "{\"label\":\"cat\"}"}
@@ -901,12 +902,12 @@ func TestBinaryFixturePayload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	createFile(t, tmpDir, "suite/test_image/test.plan", `
+	testutil.CreateFile(t, tmpDir, "suite/test_image/test.plan", `
 Perform -> entrypoints/upload -> Payload: image.jpg
 
 Expect -> vision -> Request: vision_request.json
 `)
-	createFile(t, tmpDir, "suite/test_image/vision_request.json",
+	testutil.CreateFile(t, tmpDir, "suite/test_image/vision_request.json",
 		`{"image_hash":"abc123"}`)
 
 	ws, err := workspace.LoadWorkspace(tmpDir)
@@ -915,7 +916,7 @@ Expect -> vision -> Request: vision_request.json
 	}
 
 	eng := engine.NewEngine(ws)
-	eng.RegisterAdapter(proxy.NewHTTPInitiator())
+
 
 	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
 		t.Fatalf("StartProxies: %v", err)
@@ -942,5 +943,176 @@ Expect -> vision -> Request: vision_request.json
 	if !bytes.Equal(capturedBody, jpegData) {
 		t.Fatalf("SUT received %d bytes, want %d bytes (binary JPEG mismatch)",
 			len(capturedBody), len(jpegData))
+	}
+}
+
+func TestUnsupportedEntrypointType(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/queue.json", `{
+		"type": "amqp",
+		"path": "/messages"
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/apis/payments.json", `{
+		"mode": "mock",
+		"url": "/v1/pay",
+		"expected_request": {"body": "{}"},
+		"default_response": {"code": 200, "body": "{}"}
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_msg/test.plan", "Perform -> entrypoints/queue\nExpect -> payments")
+
+	_, err := workspace.LoadWorkspace(tmpDir)
+	if err == nil {
+		t.Fatal("expected LoadWorkspace to reject unknown entrypoint type")
+	}
+	if !strings.Contains(err.Error(), "unknown type") {
+		t.Fatalf("expected 'unknown type' in error, got: %v", err)
+	}
+}
+
+func TestSUTCrashPropagatesMidTest(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", fmt.Sprintf(`{
+		"concurrency": 1,
+		"sut_command": "go run ./sut.go",
+		"timeouts": {"sut_startup": "10s", "http_client": "2s"}
+	}`))
+
+	// SUT that listens on :18923, responds once, then crashes.
+	testutil.CreateFile(t, tmpDir, "suite/sut.go", `package main
+
+import (
+	"fmt"
+	"net/http"
+	"os"
+	"time"
+)
+
+func main() {
+	http.HandleFunc("/trigger", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("ok"))
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			fmt.Fprintln(os.Stderr, "crashing now")
+			os.Exit(42)
+		}()
+	})
+	http.ListenAndServe(":18923", nil)
+}
+`)
+
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", `{
+		"type": "http",
+		"path": "/trigger",
+		"url": "http://127.0.0.1:18923"
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/apis/external.json", `{
+		"mode": "mock",
+		"url": "/v1/call",
+		"expected_request": {"body": "{\"will_never_arrive\":true}"},
+		"default_response": {"code": 200, "body": "{}"}
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_crash/test.plan", "Perform -> entrypoints/webhook\nExpect -> external")
+
+	ws, err := workspace.LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace: %v", err)
+	}
+
+	eng := engine.NewEngine(ws)
+	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+		t.Fatalf("StartProxies: %v", err)
+	}
+	defer eng.StopProxies()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	summary, err := eng.RunSuite(ctx, "suite", nil)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("RunSuite: %v", err)
+	}
+
+	if summary.Failed != 1 {
+		t.Fatalf("want 1 failure, got passed=%d failed=%d", summary.Passed, summary.Failed)
+	}
+
+	reason := summary.Failures[0].Reason
+	if !strings.Contains(reason, "SUT") && !strings.Contains(reason, "crashed") {
+		t.Fatalf("expected SUT crash reason, got: %s", reason)
+	}
+
+	if elapsed > 10*time.Second {
+		t.Fatalf("test should have failed fast on SUT crash, but took %v", elapsed)
+	}
+}
+
+func TestMismatchErrorPopulatesStructuredFields(t *testing.T) {
+	t.Parallel()
+
+	sutServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"unexpected":"value"}`))
+	}))
+	defer sutServer.Close()
+
+	tmpDir := t.TempDir()
+
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", fmt.Sprintf(`{
+		"type": "http",
+		"path": "/",
+		"url": %q,
+		"expected_response": {"body": "{\"expected\":\"match\"}"}
+	}`, sutServer.URL))
+	testutil.CreateFile(t, tmpDir, "suite/test_mismatch/test.plan", "Perform -> entrypoints/webhook")
+
+	ws, err := workspace.LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace: %v", err)
+	}
+
+	eng := engine.NewEngine(ws)
+	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+		t.Fatalf("StartProxies: %v", err)
+	}
+	defer eng.StopProxies()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	summary, err := eng.RunSuite(ctx, "suite", nil)
+	if err != nil {
+		t.Fatalf("RunSuite: %v", err)
+	}
+
+	if summary.Failed != 1 {
+		t.Fatalf("want 1 failure, got %d", summary.Failed)
+	}
+
+	f := summary.Failures[0]
+	if f.Expected == "" {
+		t.Error("TestFailure.Expected should be populated")
+	}
+	if f.Actual == "" {
+		t.Error("TestFailure.Actual should be populated")
+	}
+	if !strings.Contains(f.Expected, "expected") {
+		t.Errorf("Expected field should contain expected value, got: %s", f.Expected)
+	}
+	if !strings.Contains(f.Actual, "unexpected") {
+		t.Errorf("Actual field should contain actual response, got: %s", f.Actual)
+	}
+
+	r := summary.Results[0]
+	if r.Expected == "" || r.Actual == "" {
+		t.Error("TestResult.Expected/Actual should be populated for mismatches")
 	}
 }

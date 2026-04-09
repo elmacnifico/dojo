@@ -10,13 +10,20 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"dojo/pkg/dojo"
 )
 
+const defaultUpstreamTimeout = 30 * time.Second
+
 // HTTPProxy represents the true HTTP Proxy that intercepts traffic, resolves mocks,
 // and forwards unknown traffic to the real internet.
 type HTTPProxy struct {
+	// UpstreamTimeout caps how long a live upstream HTTP call may take. Zero uses
+	// [defaultUpstreamTimeout]. Set by the engine from the suite's timeout config.
+	UpstreamTimeout time.Duration
+
 	addr       string
 	listener   net.Listener
 	mux        *http.ServeMux
@@ -53,7 +60,7 @@ func (p *HTTPProxy) Trigger(ctx context.Context, payload []byte, endpointConfig 
 func (p *HTTPProxy) Start(ctx context.Context, listenAddr string, matchTable dojo.MatchTable) error {
 	p.matchTable = matchTable
 	p.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// 1. Read the raw request body to extract the correlation ID
+		// Read the raw request body for match-table lookup
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "Failed to read request body", http.StatusInternalServerError)
@@ -118,7 +125,11 @@ func (p *HTTPProxy) Start(ctx context.Context, listenAddr string, matchTable doj
 			proxyReq.Header.Set(k, v)
 		}
 
-		client := &http.Client{}
+		timeout := p.UpstreamTimeout
+		if timeout == 0 {
+			timeout = defaultUpstreamTimeout
+		}
+		client := &http.Client{Timeout: timeout}
 		resp, err := client.Do(proxyReq)
 		if err != nil {
 			http.Error(w, "Failed to call external API", http.StatusBadGateway)

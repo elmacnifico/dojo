@@ -9,6 +9,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"dojo/pkg/dojo"
 
@@ -135,18 +136,24 @@ func (p *PostgresProxy) recordQuery(c net.Conn, q string) {
 	}
 }
 
-// responseScanner wraps an io.Reader and scans it for an ExpectedResponse
+// responseScanner wraps an io.Reader and forwards response bytes to the
+// [MatchTable] for live-mode Postgres matching. The buffer accumulates data
+// across reads for the current query and resets only when a new query is
+// detected, so multi-chunk responses are fully visible to ProcessResponse.
+// Memory stays bounded at [maxResponseBuffer] per query.
 type responseScanner struct {
-	r          io.Reader
-	proxy      *PostgresProxy
-	clientConn net.Conn
-	buffer     []byte
+	r             io.Reader
+	proxy         *PostgresProxy
+	clientConn    net.Conn
+	buffer        []byte
+	lastSeenQuery string
 }
+
+const maxResponseBuffer = 4 * 1024 * 1024 // 4 MiB safety cap per query
 
 func (rs *responseScanner) Read(b []byte) (n int, err error) {
 	n, err = rs.r.Read(b)
 	if n > 0 {
-		rs.buffer = append(rs.buffer, b[:n]...)
 		rs.proxy.mu.Lock()
 		var id, lastQuery string
 		if pc, ok := rs.proxy.conns[rs.clientConn]; ok {
@@ -155,8 +162,19 @@ func (rs *responseScanner) Read(b []byte) (n int, err error) {
 		}
 		rs.proxy.mu.Unlock()
 
+		if lastQuery != rs.lastSeenQuery {
+			rs.buffer = rs.buffer[:0]
+			rs.lastSeenQuery = lastQuery
+		}
+
+		if len(rs.buffer)+n <= maxResponseBuffer {
+			rs.buffer = append(rs.buffer, b[:n]...)
+		}
+
 		if id != "" && lastQuery != "" && rs.proxy.matchTable != nil {
-			rs.proxy.matchTable.ProcessResponse("postgres", id, "", []byte(lastQuery), rs.buffer)
+			snapshot := make([]byte, len(rs.buffer))
+			copy(snapshot, rs.buffer)
+			rs.proxy.matchTable.ProcessResponse("postgres", id, "", []byte(lastQuery), snapshot)
 		}
 	}
 	return n, err
@@ -172,6 +190,8 @@ func (p *PostgresProxy) acceptLoop() {
 			case <-p.ctx.Done():
 				return
 			default:
+				p.log.Warn("accept error, backing off", "error", err)
+				time.Sleep(50 * time.Millisecond)
 				continue
 			}
 		}
@@ -194,6 +214,7 @@ func (p *PostgresProxy) acceptLoop() {
 			if !isWireMock {
 				targetConn, err = net.Dial("tcp", dialAddr)
 				if err != nil {
+					p.log.Warn("upstream dial failed", "addr", dialAddr, "error", err)
 					return
 				}
 				defer targetConn.Close()
@@ -229,11 +250,13 @@ func (p *PostgresProxy) acceptLoop() {
 				}
 
 				// writeMsg encodes a pgproto3 message and writes it to the client connection.
-				// Returns false if the write fails (connection dead).
+				// Returns false on encode or write failure so the caller terminates the
+				// connection instead of continuing with a corrupted stream.
 				writeMsg := func(msg pgproto3.Message) bool {
 					b, err := msg.Encode(nil)
 					if err != nil {
-						return true // encode error is not a connection failure
+						p.log.Warn("message encode failed", "error", err)
+						return false
 					}
 					if _, err := clientConn.Write(b); err != nil {
 						p.log.Warn("client write failed", "error", err)
@@ -262,41 +285,47 @@ func (p *PostgresProxy) acceptLoop() {
 					}
 
 				switch m := msg.(type) {
-				case *pgproto3.Query:
-					p.recordQuery(clientConn, m.String)
-					mr := p.matchTable.ProcessRequest("postgres", "", []byte(m.String))
+			case *pgproto3.Query:
+				p.recordQuery(clientConn, m.String)
+				var mr dojo.MatchResult
+				if p.matchTable != nil {
+					mr = p.matchTable.ProcessRequest("postgres", "", []byte(m.String))
+				}
 
-					if mr.MatchedID != "" {
-						p.mu.Lock()
-						if pc, ok := p.conns[clientConn]; ok {
-							pc.id = mr.MatchedID
-						}
-						p.mu.Unlock()
+				if mr.MatchedID != "" {
+					p.mu.Lock()
+					if pc, ok := p.conns[clientConn]; ok {
+						pc.id = mr.MatchedID
 					}
-					if mr.IsMock {
-						if !writeMsg(&pgproto3.CommandComplete{CommandTag: []byte("INSERT 0 1")}) {
-							return
-						}
-						if !writeMsg(&pgproto3.ReadyForQuery{TxStatus: 'I'}) {
-							return
-						}
+					p.mu.Unlock()
+				}
+				if mr.IsMock {
+					if !writeMsg(&pgproto3.CommandComplete{CommandTag: []byte("INSERT 0 1")}) {
+						return
 					}
-				case *pgproto3.Parse:
-					p.recordQuery(clientConn, m.Query)
-					mr := p.matchTable.ProcessRequest("postgres", "", []byte(m.Query))
+					if !writeMsg(&pgproto3.ReadyForQuery{TxStatus: 'I'}) {
+						return
+					}
+				}
+			case *pgproto3.Parse:
+				p.recordQuery(clientConn, m.Query)
+				var mr dojo.MatchResult
+				if p.matchTable != nil {
+					mr = p.matchTable.ProcessRequest("postgres", "", []byte(m.Query))
+				}
 
-					if mr.MatchedID != "" {
-						p.mu.Lock()
-						if pc, ok := p.conns[clientConn]; ok {
-							pc.id = mr.MatchedID
-						}
-						p.mu.Unlock()
+				if mr.MatchedID != "" {
+					p.mu.Lock()
+					if pc, ok := p.conns[clientConn]; ok {
+						pc.id = mr.MatchedID
 					}
-					if mr.IsMock {
-						if !writeMsg(&pgproto3.ParseComplete{}) {
-							return
-						}
+					p.mu.Unlock()
+				}
+				if mr.IsMock {
+					if !writeMsg(&pgproto3.ParseComplete{}) {
+						return
 					}
+				}
 					case *pgproto3.Bind:
 						if isWireMock {
 							if !writeMsg(&pgproto3.BindComplete{}) {
@@ -321,21 +350,28 @@ func (p *PostgresProxy) acceptLoop() {
 				}
 			}()
 
-			if !isWireMock {
-				go func() {
-					defer pw.Close()
-					io.Copy(targetConn, tee)
-				}()
+			defer pw.Close()
 
-				scanner := &responseScanner{
-					r:          targetConn,
-					proxy:      p,
-					clientConn: clientConn,
+		if !isWireMock {
+			go func() {
+				if _, err := io.Copy(targetConn, tee); err != nil && !isConnClosed(err) {
+					p.log.Warn("client→upstream copy error", "error", err)
 				}
-				io.Copy(clientConn, scanner)
-			} else {
-				io.Copy(io.Discard, tee)
+			}()
+
+			scanner := &responseScanner{
+				r:          targetConn,
+				proxy:      p,
+				clientConn: clientConn,
 			}
+			if _, err := io.Copy(clientConn, scanner); err != nil && !isConnClosed(err) {
+				p.log.Warn("upstream→client copy error", "error", err)
+			}
+		} else {
+			if _, err := io.Copy(io.Discard, tee); err != nil && !isConnClosed(err) {
+				p.log.Warn("wire-mock tee drain error", "error", err)
+			}
+		}
 		}(conn)
 	}
 }

@@ -8,6 +8,25 @@ import (
 	"dojo/internal/engine"
 )
 
+func TestNewRunnerClampsToOne(t *testing.T) {
+	t.Parallel()
+
+	for _, workers := range []int{0, -1, -100} {
+		var wg sync.WaitGroup
+		wg.Add(1)
+		var ran atomic.Bool
+		r := engine.NewRunner(workers)
+		r.Submit(func() {
+			defer wg.Done()
+			ran.Store(true)
+		})
+		wg.Wait()
+		if !ran.Load() {
+			t.Errorf("NewRunner(%d): task did not run", workers)
+		}
+	}
+}
+
 func TestConcurrentExecution(t *testing.T) {
 	t.Parallel()
 

@@ -21,14 +21,24 @@ func (stubMatchTable) ProcessResponse(string, string, string, []byte, []byte) {}
 
 func waitForConnCount(t *testing.T, p *proxy.PostgresProxy, want int, timeout time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if p.ConnCount() == want {
+	if p.ConnCount() == want {
+		return
+	}
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if p.ConnCount() == want {
+				return
+			}
+		case <-timer.C:
+			t.Errorf("ConnCount: got %d, want %d (after %v)", p.ConnCount(), want, timeout)
 			return
 		}
-		time.Sleep(5 * time.Millisecond)
 	}
-	t.Errorf("ConnCount: got %d, want %d (after %v)", p.ConnCount(), want, timeout)
 }
 
 func TestPostgresProxyConnIDCleanup(t *testing.T) {

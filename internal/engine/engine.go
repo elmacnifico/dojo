@@ -3,6 +3,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -17,7 +18,6 @@ import (
 
 	"dojo/internal/proxy"
 	"dojo/internal/workspace"
-	"dojo/pkg/dojo"
 )
 
 // EngineOption configures optional Engine behavior.
@@ -45,13 +45,14 @@ type Engine struct {
 	PostgresProxy *proxy.PostgresProxy
 	ActiveSuite   *workspace.Suite
 	sutCancel     context.CancelFunc
-	Adapters      []dojo.Adapter
 	log           *slog.Logger
 	verbose       bool
 
-	sutDead  atomic.Bool
-	sutErr   atomic.Value // stores error
-	sutOutput atomic.Value // stores string
+	sutDead     atomic.Bool
+	sutDeadCh   chan struct{} // closed when SUT crashes; used to unblock waiting tests
+	sutDeadOnce sync.Once    // prevents double-close panic on sutDeadCh
+	sutErr      atomic.Value // stores error
+	sutOutput   atomic.Value // stores string
 }
 
 // SUTError returns the SUT crash error if the process exited unexpectedly.
@@ -70,7 +71,7 @@ func NewEngine(ws *workspace.Workspace, opts ...EngineOption) *Engine {
 		Registry:      NewRegistry(),
 		HTTPProxy:     proxy.NewHTTPProxy(),
 		PostgresProxy: proxy.NewPostgresProxy(""),
-		Adapters:      []dojo.Adapter{},
+		sutDeadCh:     make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -81,11 +82,6 @@ func NewEngine(ws *workspace.Workspace, opts ...EngineOption) *Engine {
 	e.HTTPProxy.SetLogger(e.log)
 	e.PostgresProxy.SetLogger(e.log)
 	return e
-}
-
-// RegisterAdapter adds a new protocol adapter to the engine.
-func (e *Engine) RegisterAdapter(adapter dojo.Adapter) {
-	e.Adapters = append(e.Adapters, adapter)
 }
 
 // StartProxies boots all global/suite-level interceptors.
@@ -118,6 +114,9 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) error {
 		}
 	}
 
+	if suite.Config.Timeouts.HTTPClient.Duration > 0 {
+		e.HTTPProxy.UpstreamTimeout = suite.Config.Timeouts.HTTPClient.Duration
+	}
 	if err := e.HTTPProxy.Start(ctx, "127.0.0.1:0", e); err != nil {
 		return fmt.Errorf("failed to start HTTP Proxy: %w", err)
 	}
@@ -166,6 +165,7 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) error {
 			if err != nil && sutCtx.Err() == nil {
 				e.sutDead.Store(true)
 				e.sutErr.Store(err)
+				e.sutDeadOnce.Do(func() { close(e.sutDeadCh) })
 				e.log.Error("SUT exited unexpectedly", "error", err)
 			}
 		}()
@@ -251,10 +251,12 @@ func (e *Engine) StopProxies() error {
 	if e.sutCancel != nil {
 		e.sutCancel()
 	}
+	var pgErr error
 	if e.PostgresProxy.Addr() != "" {
-		e.PostgresProxy.Stop()
+		pgErr = e.PostgresProxy.Stop()
 	}
-	return e.HTTPProxy.Stop()
+	httpErr := e.HTTPProxy.Stop()
+	return errors.Join(pgErr, httpErr)
 }
 
 // RunSuite executes all tests in a Suite concurrently. The optional onResult
@@ -315,12 +317,20 @@ func (e *Engine) RunSuite(ctx context.Context, suiteName string, onResult func(w
 				if err != nil {
 					tr.Status = "fail"
 					tr.Reason = err.Error()
-					summary.Failed++
-					summary.Failures = append(summary.Failures, workspace.TestFailure{
+					failure := workspace.TestFailure{
 						TestName:   id,
 						Reason:     err.Error(),
 						DurationMs: dur.Milliseconds(),
-					})
+					}
+					var mm *MismatchError
+					if errors.As(err, &mm) {
+						tr.Expected = mm.Expected
+						tr.Actual = mm.Actual
+						failure.Expected = mm.Expected
+						failure.Actual = mm.Actual
+					}
+					summary.Failed++
+					summary.Failures = append(summary.Failures, failure)
 				} else {
 					tr.Status = "pass"
 					summary.Passed++

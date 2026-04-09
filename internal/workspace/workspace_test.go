@@ -1,38 +1,39 @@
 package workspace_test
 
 import (
-	"os"
-	"path/filepath"
+	"strings"
 	"testing"
+
+	"dojo/internal/testutil"
 	"dojo/internal/workspace"
 )
 
 func TestLoadWorkspace(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	createFile(t, tmpDir, "eval.md", "Global Eval Rule")
+	testutil.CreateFile(t, tmpDir, "eval.md", "Global Eval Rule")
 	
-	createFile(t, tmpDir, "tests/dojo.config", `{"concurrency": 40}`)
-	createFile(t, tmpDir, "tests/eval.md", "Suite Eval Rule")
+	testutil.CreateFile(t, tmpDir, "tests/dojo.config", `{"concurrency": 40}`)
+	testutil.CreateFile(t, tmpDir, "tests/eval.md", "Suite Eval Rule")
 	
-	createFile(t, tmpDir, "tests/apis/gemini.json", `{"mode": "live", "timeout": "5s", "url": "https://${ENV_API_HOST}", "headers": {"Authorization": "Bearer ${ENV_API_KEY}"}}`)
-	createFile(t, tmpDir, "tests/apis/whatsapp.json", `{"mode": "mock", "timeout": "5s", "url": "/v1/messages", "expected_request": {"file": "whatsapp_req.json"}, "default_response": {"code": 200, "file": "whatsapp_resp.json"}}`)
-	createFile(t, tmpDir, "tests/whatsapp_req.json", `{"message": "hello"}`)
-	createFile(t, tmpDir, "tests/whatsapp_resp.json", `{"status": "ok"}`)
+	testutil.CreateFile(t, tmpDir, "tests/apis/gemini.json", `{"mode": "live", "timeout": "5s", "url": "https://${ENV_API_HOST}", "headers": {"Authorization": "Bearer ${ENV_API_KEY}"}}`)
+	testutil.CreateFile(t, tmpDir, "tests/apis/whatsapp.json", `{"mode": "mock", "timeout": "5s", "url": "/v1/messages", "expected_request": {"file": "whatsapp_req.json"}, "default_response": {"code": 200, "file": "whatsapp_resp.json"}}`)
+	testutil.CreateFile(t, tmpDir, "tests/whatsapp_req.json", `{"message": "hello"}`)
+	testutil.CreateFile(t, tmpDir, "tests/whatsapp_resp.json", `{"status": "ok"}`)
 	
-	createFile(t, tmpDir, "tests/entrypoints/webhook.json", `{"type": "http", "path": "/trigger", "correlation": {"type": "jsonpath", "target": "payload.id"}}`)
+	testutil.CreateFile(t, tmpDir, "tests/entrypoints/webhook.json", `{"type": "http", "path": "/trigger"}`)
 	
-	createFile(t, tmpDir, "tests/test_001/test.plan", `
+	testutil.CreateFile(t, tmpDir, "tests/test_001/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
 Expect -> gemini -> Payload: request.json -> Evaluate Response
 `)
-	createFile(t, tmpDir, "tests/test_001/apis/gemini.json", `{"mode": "mock", "timeout": "10s", "url": "/v1/gemini"}`)
-	createFile(t, tmpDir, "tests/test_001/eval.md", "+\nTest Eval Rule")
+	testutil.CreateFile(t, tmpDir, "tests/test_001/apis/gemini.json", `{"mode": "mock", "timeout": "10s", "url": "/v1/gemini"}`)
+	testutil.CreateFile(t, tmpDir, "tests/test_001/eval.md", "+\nTest Eval Rule")
 	
-	createFile(t, tmpDir, "tests/test_002/test.plan", "Perform -> entrypoints/webhook -> Payload: in.json")
-	createFile(t, tmpDir, "tests/test_002/eval.md", "Override Rule")
+	testutil.CreateFile(t, tmpDir, "tests/test_002/test.plan", "Perform -> entrypoints/webhook -> Payload: in.json")
+	testutil.CreateFile(t, tmpDir, "tests/test_002/eval.md", "Override Rule")
 	
-	createFile(t, tmpDir, "tests/test_003/test.plan", "Perform -> entrypoints/webhook -> Payload: in.json")
+	testutil.CreateFile(t, tmpDir, "tests/test_003/test.plan", "Perform -> entrypoints/webhook -> Payload: in.json")
 
 	t.Setenv("ENV_API_HOST", "api.gemini.com")
 	t.Setenv("ENV_API_KEY", "secret123")
@@ -104,37 +105,37 @@ Expect -> gemini -> Payload: request.json -> Evaluate Response
 func TestLoadWorkspace_PlanDrivenFixtures(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	createFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
-	createFile(t, tmpDir, "suite/apis/gemini.json", `{
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+	testutil.CreateFile(t, tmpDir, "suite/apis/gemini.json", `{
 		"mode": "mock",
 		"url": "/v1beta/models/gemini:generateContent"
 	}`)
-	createFile(t, tmpDir, "suite/apis/whatsapp.json", `{
+	testutil.CreateFile(t, tmpDir, "suite/apis/whatsapp.json", `{
 		"mode": "mock",
 		"url": "/v1/messages",
 		"default_response": {"code": 200, "body": "{\"ok\":true}"}
 	}`)
-	createFile(t, tmpDir, "suite/entrypoints/webhook.json", `{
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", `{
 		"type": "http",
 		"path": "/trigger"
 	}`)
 
 	// test_plan: plan clauses name every fixture explicitly.
-	createFile(t, tmpDir, "suite/test_plan/test.plan", `Perform -> entrypoints/webhook -> Payload: incoming.json
+	testutil.CreateFile(t, tmpDir, "suite/test_plan/test.plan", `Perform -> entrypoints/webhook -> Payload: incoming.json
 Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.json
 Expect -> whatsapp -> Request: whatsapp_request.json`)
-	createFile(t, tmpDir, "suite/test_plan/incoming.json", `{"id":"1"}`)
-	createFile(t, tmpDir, "suite/test_plan/gemini_request.json", `{"prompt":"hello"}`)
-	createFile(t, tmpDir, "suite/test_plan/gemini_response.json", `{"reply":"world"}`)
-	createFile(t, tmpDir, "suite/test_plan/whatsapp_request.json", `{"msg":"hi"}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_plan/incoming.json", `{"id":"1"}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_plan/gemini_request.json", `{"prompt":"hello"}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_plan/gemini_response.json", `{"reply":"world"}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_plan/whatsapp_request.json", `{"msg":"hi"}`)
 
 	// test_explicit: apis/ override sets expected_request; plan Respond fills the response.
-	createFile(t, tmpDir, "suite/test_explicit/test.plan", `Perform -> entrypoints/webhook -> Payload: incoming.json
+	testutil.CreateFile(t, tmpDir, "suite/test_explicit/test.plan", `Perform -> entrypoints/webhook -> Payload: incoming.json
 Expect -> gemini -> Respond: gemini_response.json`)
-	createFile(t, tmpDir, "suite/test_explicit/incoming.json", `{"id":"2"}`)
-	createFile(t, tmpDir, "suite/test_explicit/gemini_response.json", `{"reply":"auto"}`)
-	createFile(t, tmpDir, "suite/test_explicit/custom_req.json", `{"prompt":"explicit"}`)
-	createFile(t, tmpDir, "suite/test_explicit/apis/gemini.json", `{
+	testutil.CreateFile(t, tmpDir, "suite/test_explicit/incoming.json", `{"id":"2"}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_explicit/gemini_response.json", `{"reply":"auto"}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_explicit/custom_req.json", `{"prompt":"explicit"}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_explicit/apis/gemini.json", `{
 		"expected_request": {"file": "custom_req.json"}
 	}`)
 
@@ -181,6 +182,38 @@ Expect -> gemini -> Respond: gemini_response.json`)
 	}
 }
 
+func TestLoadWorkspace_DuplicateExpectedRequestAfterWiring(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+	testutil.CreateFile(t, tmpDir, "suite/apis/stripe.json", `{
+		"mode": "mock",
+		"url": "/v1/charge",
+		"default_response": {"code": 200, "body": "{}"}
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", `{
+		"type": "http",
+		"path": "/trigger"
+	}`)
+
+	testutil.CreateFile(t, tmpDir, "suite/test_a/test.plan", `Perform -> entrypoints/webhook
+Expect -> stripe -> Request: stripe_request.json`)
+	testutil.CreateFile(t, tmpDir, "suite/test_a/stripe_request.json", `{"amount":100}`)
+
+	testutil.CreateFile(t, tmpDir, "suite/test_b/test.plan", `Perform -> entrypoints/webhook
+Expect -> stripe -> Request: stripe_request.json`)
+	testutil.CreateFile(t, tmpDir, "suite/test_b/stripe_request.json", `{"amount":100}`)
+
+	_, err := workspace.LoadWorkspace(tmpDir)
+	if err == nil {
+		t.Fatal("expected LoadWorkspace to reject duplicate normalized expected requests across tests")
+	}
+	if !strings.Contains(err.Error(), "duplicate normalized expected request") {
+		t.Fatalf("expected 'duplicate normalized expected request' in error, got: %v", err)
+	}
+}
+
 func payloadStr(ps *workspace.PayloadSpec) string {
 	if ps == nil {
 		return "<nil>"
@@ -202,13 +235,3 @@ func payloadStr2(dr *workspace.DefaultResponse) string {
 	return string(dr.Payload)
 }
 
-func createFile(t *testing.T, baseDir, path, content string) {
-	t.Helper()
-	fullPath := filepath.Join(baseDir, path)
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-		t.Fatalf("Failed to create dirs for %s: %v", path, err)
-	}
-	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to write file %s: %v", path, err)
-	}
-}

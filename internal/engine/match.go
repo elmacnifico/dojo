@@ -10,8 +10,8 @@ import (
 	"dojo/pkg/dojo"
 )
 
-// resolvePostgresAPI returns the name of the single Postgres API in the suite.
-// Names are sorted so behavior is deterministic when multiple Postgres APIs exist.
+// resolvePostgresAPI returns the first Postgres API name (sorted) from the suite.
+// Sorting ensures deterministic behavior when multiple Postgres APIs exist.
 func (e *Engine) resolvePostgresAPI(suite *workspace.Suite) string {
 	names := make([]string, 0, len(suite.APIs))
 	for name, cfg := range suite.APIs {
@@ -180,6 +180,14 @@ func (e *Engine) ProcessResponse(protocol, matchedID, apiName string, reqPayload
 		if apiConfig.ExpectedResponse != nil && len(apiConfig.ExpectedResponse.Payload) > 0 {
 			if httpPayloadContains(respPayload, apiConfig.ExpectedResponse.Payload) {
 				e.evalAndMark(activeTest, apiName, respPayload)
+			} else {
+				exp := truncate(string(apiConfig.ExpectedResponse.Payload), 500)
+				act := truncate(string(respPayload), 500)
+				activeTest.MarkFulfilled(apiName, &MismatchError{
+					Reason:   fmt.Sprintf("live response mismatch for API %s\n  expected (substring): %s\n  actual:              %s", apiName, exp, act),
+					Expected: exp,
+					Actual:   act,
+				})
 			}
 		} else if exp, ok := activeTest.Expectations[apiName]; ok && exp.RequiresEval {
 			e.evalAndMark(activeTest, apiName, respPayload)

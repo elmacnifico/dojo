@@ -19,7 +19,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"dojo/internal/engine"
-	"dojo/internal/proxy"
+	"dojo/internal/testutil"
 	"dojo/internal/workspace"
 )
 
@@ -250,32 +250,32 @@ func TestCrossIDCorrelation(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Suite-level configs — routing is by normalized expected_request fixtures per test.
-	createFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
 
-	createFile(t, tmpDir, "suite/apis/postgres.json", `{
+	testutil.CreateFile(t, tmpDir, "suite/apis/postgres.json", `{
 		"mode": "live",
 		"protocol": "postgres",
 		"url": "`+connStr+`"
 	}`)
 
-	createFile(t, tmpDir, "suite/apis/gemini.json", `{
+	testutil.CreateFile(t, tmpDir, "suite/apis/gemini.json", `{
 		"mode": "mock",
 		"url": "/v1beta/models/gemini-2.5-flash:generateContent"
 	}`)
 
-	createFile(t, tmpDir, "suite/apis/whatsapp.json", `{
+	testutil.CreateFile(t, tmpDir, "suite/apis/whatsapp.json", `{
 		"mode": "mock",
 		"url": "/v1/messages",
 		"default_response": {"code": 200, "body": "{\"messaging_product\":\"whatsapp\",\"messages\":[{\"id\":\"wamid.test\"}]}"}
 	}`)
 
-	createFile(t, tmpDir, "suite/entrypoints/webhook.json", `{
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", `{
 		"type": "http",
 		"path": "/trigger",
 		"url": "`+sutServer.URL+`"
 	}`)
 
-	createFile(t, tmpDir, "suite/seed/schema.sql",
+	testutil.CreateFile(t, tmpDir, "suite/seed/schema.sql",
 		"CREATE TABLE IF NOT EXISTS users (user_id TEXT, phone_number TEXT, display_name TEXT);")
 
 	geminiResp := func(userID, reply string) string {
@@ -311,7 +311,7 @@ func TestCrossIDCorrelation(t *testing.T) {
 		}
 		incoming += "}"
 
-		createFile(t, tmpDir, "suite/"+tc.id+"/test.plan", `
+		testutil.CreateFile(t, tmpDir, "suite/"+tc.id+"/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
 
 Expect -> postgres -> Request: postgres_request.sql
@@ -319,20 +319,20 @@ Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.jso
 Expect -> whatsapp -> Request: whatsapp_request.json
 `)
 
-		createFile(t, tmpDir, "suite/"+tc.id+"/incoming.json", incoming)
+		testutil.CreateFile(t, tmpDir, "suite/"+tc.id+"/incoming.json", incoming)
 
 		// Convention-named fixture files — auto-discovered by the workspace loader.
-		createFile(t, tmpDir, "suite/"+tc.id+"/postgres_request.sql", tc.pgSQL)
-		createFile(t, tmpDir, "suite/"+tc.id+"/gemini_request.json", string(buildGeminiRequest(tc.userID, tc.message)))
-		createFile(t, tmpDir, "suite/"+tc.id+"/gemini_response.json", geminiResp(tc.userID, tc.reply))
-		createFile(t, tmpDir, "suite/"+tc.id+"/whatsapp_request.json", string(buildWhatsAppRequest(tc.phone, tc.reply)))
+		testutil.CreateFile(t, tmpDir, "suite/"+tc.id+"/postgres_request.sql", tc.pgSQL)
+		testutil.CreateFile(t, tmpDir, "suite/"+tc.id+"/gemini_request.json", string(buildGeminiRequest(tc.userID, tc.message)))
+		testutil.CreateFile(t, tmpDir, "suite/"+tc.id+"/gemini_response.json", geminiResp(tc.userID, tc.reply))
+		testutil.CreateFile(t, tmpDir, "suite/"+tc.id+"/whatsapp_request.json", string(buildWhatsAppRequest(tc.phone, tc.reply)))
 
 		if tc.needsSeed {
 			seed := fmt.Sprintf("INSERT INTO users (user_id, phone_number) VALUES ('%s', '%s');", tc.userID, tc.phone)
 			if tc.displayName != "" {
 				seed = fmt.Sprintf("INSERT INTO users (user_id, phone_number, display_name) VALUES ('%s', '%s', 'OldName');", tc.userID, tc.phone)
 			}
-			createFile(t, tmpDir, "suite/"+tc.id+"/seed/seed.sql", seed)
+			testutil.CreateFile(t, tmpDir, "suite/"+tc.id+"/seed/seed.sql", seed)
 		}
 	}
 
@@ -352,7 +352,7 @@ Expect -> whatsapp -> Request: whatsapp_request.json
 	}
 
 	eng := engine.NewEngine(ws)
-	eng.RegisterAdapter(proxy.NewHTTPInitiator())
+
 
 	if err := eng.StartProxies(ctx, "suite"); err != nil {
 		t.Fatalf("start proxies: %v", err)

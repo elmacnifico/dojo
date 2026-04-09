@@ -213,7 +213,11 @@ func (a *AIEvaluator) callGemini(ctx context.Context, prompt, apiKey string) (st
 	if reqURL == "" {
 		reqURL = defaultURL
 	} else if !strings.Contains(reqURL, "?key=") {
-		reqURL = fmt.Sprintf("%s?key=%s", reqURL, apiKey)
+		sep := "?"
+		if strings.Contains(reqURL, "?") {
+			sep = "&"
+		}
+		reqURL = fmt.Sprintf("%s%skey=%s", reqURL, sep, apiKey)
 	}
 
 	return a.doLLMRequest(ctx, llmRequest{

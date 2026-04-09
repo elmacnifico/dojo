@@ -1,8 +1,4 @@
 {
   "type": "http",
-  "path": "/trigger",
-  "correlation": {
-    "type": "jsonpath",
-    "target": "phone_number"
-  }
+  "path": "/trigger"
 }

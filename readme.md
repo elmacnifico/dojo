@@ -185,12 +185,12 @@ tests/blackbox/
     postgres.json                        # mode: live, connection string
     whatsapp.json                        # mode: mock, inline default_response
   entrypoints/
-    webhook.json                         # How Dojo triggers the SUT
+    webhook.json                         # How Dojo triggers the SUT (JSON payload)
+    upload.json                          # How Dojo triggers the SUT (binary payload)
   seed/
     schema.sql                           # Shared DDL, run before all tests
   gemini_request.json                    # Suite-level fixture (deep-merge base)
   whatsapp_request.json                  # Suite-level fixture (deep-merge base)
-  eval.md                               # Suite-wide AI evaluation prompt
 
   test_user_register/
     user_register.plan                   # The plan (pure logical intent)
@@ -231,6 +231,12 @@ tests/blackbox/
     postgres_request.sql
     seed/
       seed.sql
+
+  test_image_upload/
+    image_upload.plan
+    image.jpg                            # Binary payload sent to the SUT
+    gemini_request.json
+    gemini_response.json
 ```
 
 Key observations:
@@ -243,6 +249,8 @@ Key observations:
   suite WhatsApp config for that single test.
 * `seed/` directories can exist at suite level (shared schema) and test level
   (test-specific data).
+* `test_image_upload` demonstrates binary fixture payloads -- the `.plan` uses
+  `Payload: image.jpg` and Dojo sends the raw JPEG bytes to the SUT.
 
 ---
 
@@ -354,9 +362,9 @@ rather than replacing it.
 
 Here is a concrete end-to-end flow for one test in the example suite:
 
-1. **Boot:** Dojo reads `dojo.config`, discovers 4 tests (`test_user_register`,
-   `test_user_lookup`, `test_user_update`, `test_user_deactivate`), and loads
-   suite-level API configs from `apis/`.
+1. **Boot:** Dojo reads `dojo.config`, discovers 5 tests (`test_user_register`,
+   `test_user_lookup`, `test_user_update`, `test_user_deactivate`,
+   `test_image_upload`), and loads suite-level API configs from `apis/`.
 
 2. **Fixture resolution:** For `test_user_deactivate`, Dojo finds
    `gemini_request.json` at both suite and test level. It deep-merges them:
@@ -386,22 +394,20 @@ Here is a concrete end-to-end flow for one test in the example suite:
 
 ## Outputs and Artifacts
 
-After execution, Dojo outputs a `results/` directory designed for both AI
-agents and human engineers:
+By default Dojo prints results to the console. Pass `--output <dir>` to write
+machine-readable artifacts:
 
 ```text
-results/
-  summary.json             # Strict schema for AI agents (total, passed, failed, trace paths)
-  summary.md               # Executive Markdown summary for humans
-  tests/
-    test_user_deactivate/
-      report.md            # Step-by-step diffs and AI evaluation reasoning
-      trace.json           # Full capture of intercepted SUT traffic
-      sut_logs.txt         # Sliced STDOUT/STDERR from the app
+<output-dir>/
+  summary.json             # Structured results for AI agents and CI (total, passed, failed, per-test details)
+  summary.md               # Markdown summary for humans (results table, failure details)
 ```
 
-If the SUT process crashes (exit code != 0), Dojo immediately halts all workers
-and generates a `FATAL_CRASH` log.
+Use `--format json` for a single JSON blob on stdout, or `--format jsonl` to
+stream one JSON object per test result as it completes.
+
+If the SUT process crashes (exit code != 0), Dojo propagates the error to all
+in-flight tests and reports each as failed with the crash reason.
 
 ---
 
@@ -416,14 +422,20 @@ and generates a `FATAL_CRASH` log.
 ### Running a Suite
 
 ```bash
-dojo run ./tests/blackbox
+# From the project root:
+go run cmd/dojo/main.go ./example/tests/blackbox
+
+# Or after building:
+dojo ./example/tests/blackbox
+dojo --format json -o results/ ./example/tests/blackbox
 ```
 
 Dojo will:
 
 1. Read `dojo.config` and configure environment variables to route SUT traffic
    through Dojo's local proxies.
-2. Boot your application as a child process.
+2. Boot your application as a child process (when `sut_command` is set).
 3. Spin up concurrent test workers (up to the configured `concurrency` limit).
 4. Execute all `Perform` triggers and wait for `Expect` matches.
-5. Tear down the application and write the verdict to `./results`.
+5. Tear down the application and print the verdict (pass `--output` to write
+   `summary.json` and `summary.md` to disk).

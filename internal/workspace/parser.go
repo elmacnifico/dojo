@@ -48,11 +48,6 @@ func (c *Clause) Key() string {
 	return strings.Join(c.KeyParts, " ")
 }
 
-// Value returns the raw string value of the clause.
-func (c *Clause) Value() *string {
-	return c.RawValue
-}
-
 // ParsedDocument is the public API format of a parsed script.
 type ParsedDocument struct {
 	Lines []ParsedLine

@@ -16,6 +16,17 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// MismatchError is returned when an actual payload does not match the expected
+// one. It carries structured Expected/Actual data so callers (e.g. RunSuite)
+// can populate [workspace.TestFailure] fields for rich reports.
+type MismatchError struct {
+	Reason   string
+	Expected string
+	Actual   string
+}
+
+func (e *MismatchError) Error() string { return e.Reason }
+
 func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Test, suite *workspace.Suite, suiteName string) error {
 	livePostgres := false
 	var livePGURL string
@@ -74,6 +85,7 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 		ID:           id,
 		Test:         test,
 		Suite:        suite,
+		Ctx:          ctx,
 		Expectations: make(map[string]*Expectation),
 		done:         make(chan struct{}),
 	}
@@ -102,7 +114,8 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 	e.Registry.Register(id, active)
 	defer e.Registry.Unregister(id)
 
-	if ep.Type == "http" {
+	switch ep.Type {
+	case "http":
 		url := ep.URL
 		if url == "" {
 			url = "http://127.0.0.1:8080"
@@ -134,15 +147,23 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 			}
 
 			if !httpPayloadContains(respBody, ep.ExpectedResponse.Payload) {
-				return fmt.Errorf("entrypoint response mismatch\n  expected (substring): %s\n  actual:              %s",
-					truncate(string(ep.ExpectedResponse.Payload), 200),
-					truncate(string(respBody), 200))
+				exp := truncate(string(ep.ExpectedResponse.Payload), 500)
+				act := truncate(string(respBody), 500)
+				return &MismatchError{
+					Reason:   fmt.Sprintf("entrypoint response mismatch\n  expected (substring): %s\n  actual:              %s", exp, act),
+					Expected: exp,
+					Actual:   act,
+				}
 			}
 		}
+	default:
+		return fmt.Errorf("unsupported entrypoint type %q for %q; only \"http\" is currently supported", ep.Type, epName)
 	}
 
 	select {
 	case <-active.done:
+	case <-e.sutDeadCh:
+		return fmt.Errorf("SUT process crashed while test was running: %v", e.SUTError())
 	case <-ctx.Done():
 		var unfulfilled []string
 		for api, exp := range active.Expectations {
@@ -232,7 +253,11 @@ func (e *Engine) Evaluate(activeTest *ActiveTest, payload []byte) error {
 		return fmt.Errorf("creating evaluator: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), activeTest.Suite.Config.Timeouts.AIEvaluator.Duration)
+	parent := activeTest.Ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, activeTest.Suite.Config.Timeouts.AIEvaluator.Duration)
 	defer cancel()
 
 	result, err := evaluator.Evaluate(ctx, payload, evalRule)

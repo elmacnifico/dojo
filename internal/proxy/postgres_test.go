@@ -6,9 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -18,20 +16,9 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"dojo/internal/engine"
-	"dojo/internal/proxy"
+	"dojo/internal/testutil"
 	"dojo/internal/workspace"
 )
-
-func createFile(t *testing.T, baseDir, path, content string) {
-	t.Helper()
-	fullPath := filepath.Join(baseDir, path)
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-		t.Fatalf("Failed to create dirs for %s: %v", path, err)
-	}
-	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to write file %s: %v", path, err)
-	}
-}
 
 func TestPostgresQueryCapture(t *testing.T) {
 	if out, err := exec.Command("docker", "info").CombinedOutput(); err != nil {
@@ -79,21 +66,21 @@ func TestPostgresQueryCapture(t *testing.T) {
 	defer sutServer.Close()
 
 	tmpDir := t.TempDir()
-	createFile(t, tmpDir, "test_suite/dojo.config", `{"concurrency": 1}`)
-	createFile(t, tmpDir, "test_suite/apis/postgres.json", `{"mode": "live", "protocol": "postgres", "url": "`+connStr+`", "correlation": {"type": "regex", "target": "(test_[0-9]+)"}}`)
-	createFile(t, tmpDir, "test_suite/entrypoints/webhook.json", `{"type": "http", "path": "/trigger", "url": "`+sutServer.URL+`", "correlation": {"type": "jsonpath", "target": "id"}}`)
+	testutil.CreateFile(t, tmpDir, "test_suite/dojo.config", `{"concurrency": 1}`)
+	testutil.CreateFile(t, tmpDir, "test_suite/apis/postgres.json", `{"mode": "live", "protocol": "postgres", "url": "`+connStr+`"}`)
+	testutil.CreateFile(t, tmpDir, "test_suite/entrypoints/webhook.json", `{"type": "http", "path": "/trigger", "url": "`+sutServer.URL+`"}`)
 
-	createFile(t, tmpDir, "test_suite/test_001/test.plan", `
+	testutil.CreateFile(t, tmpDir, "test_suite/test_001/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
 Expect -> postgres -> Payload: ""
 `)
-	createFile(t, tmpDir, "test_suite/test_001/incoming.json", `{"id": "test_001"}`)
-	createFile(t, tmpDir, "test_suite/test_001/apis/postgres.json", `{
+	testutil.CreateFile(t, tmpDir, "test_suite/test_001/incoming.json", `{"id": "test_001"}`)
+	testutil.CreateFile(t, tmpDir, "test_suite/test_001/apis/postgres.json", `{
 		"expected_request": {"body": "INSERT INTO users (name) VALUES ('test_001')"},
 		"expected_response": {"body": "INSERT 0 1"}
 	}`)
 
-	createFile(t, tmpDir, "test_suite/seed/schema.sql", "CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT);")
+	testutil.CreateFile(t, tmpDir, "test_suite/seed/schema.sql", "CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT);")
 
 	ws, err := workspace.LoadWorkspace(tmpDir)
 	if err != nil {
@@ -101,7 +88,7 @@ Expect -> postgres -> Payload: ""
 	}
 
 	eng := engine.NewEngine(ws)
-	eng.RegisterAdapter(proxy.NewHTTPInitiator())
+
 
 	if err := eng.StartProxies(ctx, "test_suite"); err != nil {
 		t.Fatalf("Failed to start proxies: %v", err)
@@ -134,16 +121,16 @@ Expect -> postgres -> Payload: ""
 	}
 
 	tmpDir2 := t.TempDir()
-	createFile(t, tmpDir2, "test_suite/dojo.config", `{"concurrency": 1}`)
-	createFile(t, tmpDir2, "test_suite/apis/postgres.json", `{"mode": "mock", "protocol": "postgres", "url": "", "correlation": {"type": "regex", "target": "(test_[0-9]+)"}}`)
-	createFile(t, tmpDir2, "test_suite/entrypoints/webhook.json", `{"type": "http", "path": "/trigger", "url": "`+sutServer.URL+`", "correlation": {"type": "jsonpath", "target": "id"}}`)
+	testutil.CreateFile(t, tmpDir2, "test_suite/dojo.config", `{"concurrency": 1}`)
+	testutil.CreateFile(t, tmpDir2, "test_suite/apis/postgres.json", `{"mode": "mock", "protocol": "postgres", "url": ""}`)
+	testutil.CreateFile(t, tmpDir2, "test_suite/entrypoints/webhook.json", `{"type": "http", "path": "/trigger", "url": "`+sutServer.URL+`"}`)
 
-	createFile(t, tmpDir2, "test_suite/test_002/test.plan", `
+	testutil.CreateFile(t, tmpDir2, "test_suite/test_002/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
 Expect -> postgres -> Payload: ""
 `)
-	createFile(t, tmpDir2, "test_suite/test_002/incoming.json", `{"id": "test_002"}`)
-	createFile(t, tmpDir2, "test_suite/test_002/apis/postgres.json", `{
+	testutil.CreateFile(t, tmpDir2, "test_suite/test_002/incoming.json", `{"id": "test_002"}`)
+	testutil.CreateFile(t, tmpDir2, "test_suite/test_002/apis/postgres.json", `{
 		"mode": "mock",
 		"protocol": "postgres",
 		"url": "",
@@ -155,7 +142,7 @@ Expect -> postgres -> Payload: ""
 		t.Fatalf("Failed to load workspace 2: %v", err)
 	}
 	eng2 := engine.NewEngine(ws2)
-	eng2.RegisterAdapter(proxy.NewHTTPInitiator())
+
 
 	if err := eng2.StartProxies(ctx, "test_suite"); err != nil {
 		t.Fatalf("Failed to start proxies 2: %v", err)

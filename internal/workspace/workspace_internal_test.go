@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateAPIConfig(t *testing.T) {
@@ -369,35 +370,186 @@ func TestWireFixturesFromPlan(t *testing.T) {
 
 func strPtr(s string) *string { return &s }
 
+func TestValidateSuiteConfig(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		cfg        DojoConfig
+		wantErr    bool
+		errContain string
+	}{
+		{
+			name:    "concurrency zero defaults to 1",
+			cfg:     DojoConfig{Concurrency: 0},
+			wantErr: false,
+		},
+		{
+			name:    "concurrency negative defaults to 1",
+			cfg:     DojoConfig{Concurrency: -5},
+			wantErr: false,
+		},
+		{
+			name:    "concurrency positive passes",
+			cfg:     DojoConfig{Concurrency: 4},
+			wantErr: false,
+		},
+		{
+			name: "evaluator bad provider",
+			cfg: DojoConfig{
+				Concurrency: 1,
+				Evaluator:   &EvaluatorConfig{Provider: "llama", Model: "v1", APIKeyEnv: "KEY"},
+			},
+			wantErr:    true,
+			errContain: "evaluator provider must be one of",
+		},
+		{
+			name: "evaluator empty model",
+			cfg: DojoConfig{
+				Concurrency: 1,
+				Evaluator:   &EvaluatorConfig{Provider: "gemini", Model: "", APIKeyEnv: "KEY"},
+			},
+			wantErr:    true,
+			errContain: "evaluator model must not be empty",
+		},
+		{
+			name: "evaluator empty api_key_env",
+			cfg: DojoConfig{
+				Concurrency: 1,
+				Evaluator:   &EvaluatorConfig{Provider: "openai", Model: "gpt-4", APIKeyEnv: ""},
+			},
+			wantErr:    true,
+			errContain: "evaluator api_key_env must not be empty",
+		},
+		{
+			name: "evaluator valid",
+			cfg: DojoConfig{
+				Concurrency: 1,
+				Evaluator:   &EvaluatorConfig{Provider: "anthropic", Model: "claude-3", APIKeyEnv: "ANTHROPIC_KEY"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "negative timeout",
+			cfg: DojoConfig{
+				Concurrency: 1,
+				Timeouts:    TimeoutConfig{SUTStartup: Duration{-5 * time.Second}},
+			},
+			wantErr:    true,
+			errContain: "must not be negative",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := tc.cfg
+			err := validateSuiteConfig("test-suite", &cfg)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if !strings.Contains(err.Error(), tc.errContain) {
+					t.Fatalf("error %q should contain %q", err.Error(), tc.errContain)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+
+	t.Run("concurrency clamped to 1", func(t *testing.T) {
+		t.Parallel()
+		cfg := DojoConfig{Concurrency: -3}
+		if err := validateSuiteConfig("s", &cfg); err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Concurrency != 1 {
+			t.Errorf("expected concurrency clamped to 1, got %d", cfg.Concurrency)
+		}
+	})
+}
+
+func TestValidateEntrypointConfig(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		cfg        EntrypointConfig
+		wantErr    bool
+		errContain string
+	}{
+		{"empty type", EntrypointConfig{Type: ""}, true, "type must not be empty"},
+		{"unknown type", EntrypointConfig{Type: "grpc"}, true, "unknown type"},
+		{"valid http", EntrypointConfig{Type: "http"}, false, ""},
+		{"valid HTTP uppercase", EntrypointConfig{Type: "HTTP"}, false, ""},
+		{"whitespace type", EntrypointConfig{Type: "  "}, true, "type must not be empty"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := tc.cfg
+			err := validateEntrypointConfig("webhook", &cfg)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if !strings.Contains(err.Error(), tc.errContain) {
+					t.Fatalf("error %q should contain %q", err.Error(), tc.errContain)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestCopyAPIConfig(t *testing.T) {
 	t.Parallel()
 
 	src := APIConfig{
 		Mode: "mock",
 		URL:  "/v1/test",
-		Correlation: &CorrelationConfig{
-			Type:   "jsonpath",
-			Target: "id",
+		Headers: map[string]string{
+			"Authorization": "Bearer token",
 		},
-		ExpectedRequest: &PayloadSpec{Body: "req"},
-		DefaultResponse: &DefaultResponse{Code: 200, Body: "resp"},
+		ExpectedRequest:  &PayloadSpec{Body: "req", Payload: []byte("req-payload")},
+		ExpectedResponse: &PayloadSpec{Body: "eresp", Payload: []byte("eresp-payload")},
+		DefaultResponse:  &DefaultResponse{Code: 200, Body: "resp", Payload: []byte("resp-payload")},
 	}
 
 	dst := CopyAPIConfig(src)
 
 	// Mutate source pointers to prove independence.
-	src.Correlation.Target = "mutated"
 	src.ExpectedRequest.Body = "mutated"
+	src.ExpectedRequest.Payload[0] = 'X'
+	src.ExpectedResponse.Payload[0] = 'Y'
 	src.DefaultResponse.Body = "mutated"
+	src.DefaultResponse.Payload[0] = 'Z'
+	src.Headers["Authorization"] = "mutated"
 
-	if dst.Correlation.Target != "id" {
-		t.Errorf("Correlation not deep-copied: got %q", dst.Correlation.Target)
-	}
 	if dst.ExpectedRequest.Body != "req" {
 		t.Errorf("ExpectedRequest not deep-copied: got %q", dst.ExpectedRequest.Body)
 	}
+	if string(dst.ExpectedRequest.Payload) != "req-payload" {
+		t.Errorf("ExpectedRequest.Payload not deep-copied: got %q", dst.ExpectedRequest.Payload)
+	}
+	if string(dst.ExpectedResponse.Payload) != "eresp-payload" {
+		t.Errorf("ExpectedResponse.Payload not deep-copied: got %q", dst.ExpectedResponse.Payload)
+	}
 	if dst.DefaultResponse.Body != "resp" {
 		t.Errorf("DefaultResponse not deep-copied: got %q", dst.DefaultResponse.Body)
+	}
+	if string(dst.DefaultResponse.Payload) != "resp-payload" {
+		t.Errorf("DefaultResponse.Payload not deep-copied: got %q", dst.DefaultResponse.Payload)
+	}
+	if dst.Headers["Authorization"] != "Bearer token" {
+		t.Errorf("Headers not deep-copied: got %q", dst.Headers["Authorization"])
 	}
 }
 

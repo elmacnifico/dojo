@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"dojo/internal/engine"
 	"dojo/internal/proxy"
@@ -45,10 +46,6 @@ func TestHTTPProxy(t *testing.T) {
 					},
 					"mockAPI": {
 						Mode: "mock",
-						Correlation: &workspace.CorrelationConfig{
-							Type:   "jsonpath",
-							Target: "id",
-						},
 						ExpectedRequest: &workspace.PayloadSpec{
 							Payload: []byte(`{"id": "test_123"}`),
 						},
@@ -202,5 +199,44 @@ func TestHTTPProxy_ProcessRequestErrorReturns502(t *testing.T) {
 
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("want status %d, got %d", http.StatusBadGateway, resp.StatusCode)
+	}
+}
+
+type slowLiveMatchTable struct {
+	destURL string
+}
+
+func (s slowLiveMatchTable) ProcessRequest(string, string, []byte) dojo.MatchResult {
+	return dojo.MatchResult{DestURL: s.destURL}
+}
+func (slowLiveMatchTable) ProcessResponse(string, string, string, []byte, []byte) {}
+
+func TestHTTPProxy_UpstreamTimeout(t *testing.T) {
+	t.Parallel()
+
+	done := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-done
+	}))
+	defer func() {
+		close(done)
+		slow.Close()
+	}()
+
+	p := proxy.NewHTTPProxy()
+	p.UpstreamTimeout = 100 * time.Millisecond
+	if err := p.Start(context.Background(), "127.0.0.1:0", slowLiveMatchTable{destURL: slow.URL}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer p.Stop()
+
+	resp, err := http.Post("http://"+p.Addr()+"/api/endpoint", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("want 502 on upstream timeout, got %d", resp.StatusCode)
 	}
 }

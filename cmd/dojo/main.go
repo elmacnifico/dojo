@@ -15,7 +15,6 @@ import (
 	"syscall"
 
 	"dojo/internal/engine"
-	"dojo/internal/proxy"
 	"dojo/internal/reporter"
 	"dojo/internal/workspace"
 )
@@ -56,6 +55,12 @@ func main() {
 		outDir = *oFlag
 	}
 	format := strings.ToLower(*formatFlag)
+	switch format {
+	case "console", "json", "jsonl":
+	default:
+		fmt.Fprintf(os.Stderr, "Error: unsupported --format %q (must be console, json, or jsonl)\n", format)
+		os.Exit(1)
+	}
 
 	args := flag.Args()
 	if len(args) < 1 {
@@ -111,13 +116,15 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
 	eng := engine.NewEngine(ws, engine.WithLogger(logger), engine.WithVerbose(verbose))
 
-	eng.RegisterAdapter(proxy.NewHTTPInitiator())
-
 	if err := eng.StartProxies(ctx, suiteName); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start proxies: %v\n", err)
 		os.Exit(1)
 	}
-	defer eng.StopProxies()
+	defer func() {
+		if err := eng.StopProxies(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: proxy shutdown: %v\n", err)
+		}
+	}()
 
 	if format == "console" {
 		fmt.Printf("\n--- RUNNING SUITE: %s (%d tests, concurrency %d) ---\n\n",
@@ -131,8 +138,12 @@ func main() {
 
 		switch format {
 		case "jsonl":
-			b, _ := json.Marshal(tr)
-			fmt.Println(string(b))
+			b, err := json.Marshal(tr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to marshal test result: %v\n", err)
+			} else {
+				fmt.Println(string(b))
+			}
 		case "console":
 			dur := formatDuration(tr.DurationMs)
 			if tr.Status == "pass" {
@@ -158,8 +169,12 @@ func main() {
 
 	switch format {
 	case "json":
-		b, _ := json.MarshalIndent(summary, "", "  ")
-		fmt.Println(string(b))
+		b, err := json.MarshalIndent(summary, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to marshal summary: %v\n", err)
+		} else {
+			fmt.Println(string(b))
+		}
 	case "console":
 		printConsoleSummary(summary)
 	}

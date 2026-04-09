@@ -28,7 +28,7 @@ type Adapter interface {
 // Evaluator evaluates a payload against an expected state or AI rule.
 type Evaluator interface {
     // Evaluate compares actual data against an expected rule.
-    Evaluate(actual []byte, expectedRule string) (EvaluatorResult, error)
+    Evaluate(ctx context.Context, actual []byte, expectedRule string) (EvaluatorResult, error)
 }
 ```
 

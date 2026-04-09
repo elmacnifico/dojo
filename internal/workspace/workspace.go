@@ -11,14 +11,6 @@ import (
 	"time"
 )
 
-// CorrelationConfig specifies how Dojo extracts trace IDs from payloads.
-type CorrelationConfig struct {
-	Type   string `json:"type"`            // "jsonpath", "regex"
-	Target string `json:"target"`          // The jsonpath string or regex string
-	Regex  string `json:"regex,omitempty"` // Optional regex to apply after jsonpath extraction
-	Value  string `json:"value,omitempty"` // Exact value if explicitly specified in a test override
-}
-
 // PayloadSpec configures raw payload matching for request or response assertions.
 type PayloadSpec struct {
 	Body    string `json:"body,omitempty"`
@@ -36,25 +28,23 @@ type DefaultResponse struct {
 
 // APIConfig controls the mode and URL behavior for an outbound SUT dependency.
 type APIConfig struct {
-	Protocol         string             `json:"protocol,omitempty"` // "http", "postgres" (defaults to "http")
-	Mode             string             `json:"mode,omitempty"`     // "mock" or "live"
-	Timeout          string             `json:"timeout"`
-	URL              string             `json:"url"`
-	Headers          map[string]string  `json:"headers,omitempty"` // For API keys via env vars
-	Correlation      *CorrelationConfig `json:"correlation,omitempty"`
-	ExpectedRequest  *PayloadSpec       `json:"expected_request,omitempty"`
-	ExpectedResponse *PayloadSpec       `json:"expected_response,omitempty"`
-	DefaultResponse  *DefaultResponse   `json:"default_response,omitempty"`
+	Protocol         string            `json:"protocol,omitempty"` // "http", "postgres" (defaults to "http")
+	Mode             string            `json:"mode,omitempty"`     // "mock" or "live"
+	Timeout          string            `json:"timeout"`
+	URL              string            `json:"url"`
+	Headers          map[string]string `json:"headers,omitempty"` // For API keys via env vars
+	ExpectedRequest  *PayloadSpec      `json:"expected_request,omitempty"`
+	ExpectedResponse *PayloadSpec      `json:"expected_response,omitempty"`
+	DefaultResponse  *DefaultResponse  `json:"default_response,omitempty"`
 }
 
 // EntrypointConfig represents how Dojo triggers the SUT to start a test.
 type EntrypointConfig struct {
-	Type             string             `json:"type"`
-	Path             string             `json:"path"`
-	URL              string             `json:"url,omitempty"`
-	Headers          map[string]string  `json:"headers,omitempty"`
-	Correlation      *CorrelationConfig `json:"correlation,omitempty"`
-	ExpectedResponse *PayloadSpec       `json:"expected_response,omitempty"`
+	Type             string            `json:"type"`
+	Path             string            `json:"path"`
+	URL              string            `json:"url,omitempty"`
+	Headers          map[string]string `json:"headers,omitempty"`
+	ExpectedResponse *PayloadSpec      `json:"expected_response,omitempty"`
 }
 
 // EvaluatorConfig holds the rules for AI evaluation.
@@ -237,6 +227,9 @@ func LoadWorkspace(baseDir string) (*Workspace, error) {
 			if err := loadJSON(configPath, &suite.Config); err != nil {
 				return nil, err
 			}
+			if err := validateSuiteConfig(e.Name(), &suite.Config); err != nil {
+				return nil, err
+			}
 
 			// Read Suite APIs
 			apisDir := filepath.Join(suitePath, "apis")
@@ -271,6 +264,9 @@ func LoadWorkspace(baseDir string) (*Workspace, error) {
 							return nil, err
 						}
 						expandEntrypointConfig(&cfg)
+						if err := validateEntrypointConfig(name, &cfg); err != nil {
+							return nil, err
+						}
 
 						// Load expected response fixture if provided
 						if cfg.ExpectedResponse != nil {
@@ -297,9 +293,11 @@ func LoadWorkspace(baseDir string) (*Workspace, error) {
 
 			// Read Tests
 			testEntries, err := os.ReadDir(suitePath)
-			if err == nil {
-				for _, te := range testEntries {
-					if te.IsDir() && strings.HasPrefix(te.Name(), "test_") {
+			if err != nil {
+				return nil, fmt.Errorf("reading suite directory %s: %w", suitePath, err)
+			}
+			for _, te := range testEntries {
+				if te.IsDir() && strings.HasPrefix(te.Name(), "test_") {
 						testPath := filepath.Join(suitePath, te.Name())
 						test := &Test{
 							APIs: make(map[string]APIConfig),
@@ -379,7 +377,6 @@ func LoadWorkspace(baseDir string) (*Workspace, error) {
 					}
 
 						suite.Tests[te.Name()] = test
-					}
 				}
 			}
 
@@ -394,26 +391,42 @@ func LoadWorkspace(baseDir string) (*Workspace, error) {
 	return ws, nil
 }
 
-// CopyAPIConfig returns a deep copy of an APIConfig, cloning all pointer fields.
+// CopyAPIConfig returns a deep copy of an APIConfig, cloning all pointer fields,
+// the Headers map, and Payload byte slices so mutations to the copy never
+// affect the original.
 func CopyAPIConfig(src APIConfig) APIConfig {
 	dst := src
-	if src.Correlation != nil {
-		c := *src.Correlation
-		dst.Correlation = &c
+	if src.Headers != nil {
+		dst.Headers = make(map[string]string, len(src.Headers))
+		for k, v := range src.Headers {
+			dst.Headers[k] = v
+		}
 	}
 	if src.ExpectedRequest != nil {
 		e := *src.ExpectedRequest
+		e.Payload = cloneBytes(src.ExpectedRequest.Payload)
 		dst.ExpectedRequest = &e
 	}
 	if src.ExpectedResponse != nil {
 		e := *src.ExpectedResponse
+		e.Payload = cloneBytes(src.ExpectedResponse.Payload)
 		dst.ExpectedResponse = &e
 	}
 	if src.DefaultResponse != nil {
 		r := *src.DefaultResponse
+		r.Payload = cloneBytes(src.DefaultResponse.Payload)
 		dst.DefaultResponse = &r
 	}
 	return dst
+}
+
+func cloneBytes(b []byte) []byte {
+	if b == nil {
+		return nil
+	}
+	c := make([]byte, len(b))
+	copy(c, b)
+	return c
 }
 
 // wireFixturesFromPlan reads Request and Respond clauses from the parsed plan
@@ -469,6 +482,64 @@ func loadJSON(path string, v any) error {
 	if err := json.Unmarshal(b, v); err != nil {
 		return fmt.Errorf("parsing %s: %w", path, err)
 	}
+	return nil
+}
+
+// validateEntrypointConfig checks that an entrypoint has a valid type. Unknown
+// types fail at load time with a clear message instead of at test execution time.
+func validateEntrypointConfig(name string, cfg *EntrypointConfig) error {
+	t := strings.ToLower(strings.TrimSpace(cfg.Type))
+	if t == "" {
+		return fmt.Errorf("entrypoint %s: type must not be empty", name)
+	}
+	switch t {
+	case "http":
+	default:
+		return fmt.Errorf("entrypoint %s: unknown type %q (supported: http)", name, cfg.Type)
+	}
+	return nil
+}
+
+// validateSuiteConfig checks suite-level config for invalid values that would
+// cause panics or confusing runtime errors. Called at load time so problems
+// surface before any test execution begins.
+func validateSuiteConfig(suiteName string, cfg *DojoConfig) error {
+	if cfg.Concurrency < 1 {
+		cfg.Concurrency = 1
+	}
+
+	if eval := cfg.Evaluator; eval != nil {
+		switch strings.ToLower(eval.Provider) {
+		case "gemini", "openai", "anthropic":
+		default:
+			return fmt.Errorf("suite %s: evaluator provider must be one of gemini, openai, anthropic; got %q", suiteName, eval.Provider)
+		}
+		if eval.Model == "" {
+			return fmt.Errorf("suite %s: evaluator model must not be empty", suiteName)
+		}
+		if eval.APIKeyEnv == "" {
+			return fmt.Errorf("suite %s: evaluator api_key_env must not be empty", suiteName)
+		}
+	}
+
+	tc := cfg.Timeouts
+	durations := []struct {
+		name string
+		val  Duration
+	}{
+		{"sut_startup", tc.SUTStartup},
+		{"sut_shutdown", tc.SUTShutdown},
+		{"tcp_poll_interval", tc.TCPPollInterval},
+		{"tcp_dial_timeout", tc.TCPDialTimeout},
+		{"http_client", tc.HTTPClient},
+		{"ai_evaluator", tc.AIEvaluator},
+	}
+	for _, d := range durations {
+		if d.val.Duration < 0 {
+			return fmt.Errorf("suite %s: timeout %s must not be negative, got %s", suiteName, d.name, d.val.Duration)
+		}
+	}
+
 	return nil
 }
 

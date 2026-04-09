@@ -5,8 +5,12 @@ type Runner struct {
 	sem chan struct{}
 }
 
-// NewRunner creates a new bounded concurrency runner.
+// NewRunner creates a new bounded concurrency runner. Values below 1 are
+// clamped to 1 so callers never trigger a panic or deadlock.
 func NewRunner(maxWorkers int) *Runner {
+	if maxWorkers < 1 {
+		maxWorkers = 1
+	}
 	return &Runner{
 		sem: make(chan struct{}, maxWorkers),
 	}
