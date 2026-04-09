@@ -105,9 +105,28 @@ func buildGeminiRequest(userID, message string) geminiRequest {
 	}
 }
 
+type askRequest struct {
+	Message string `json:"message"`
+}
+
+type askResponse struct {
+	Response       string          `json:"response"`
+	Classification json.RawMessage `json:"classification"`
+}
+
+const intentSystemPrompt = "You are a customer message classifier for TechCorp. " +
+	"Analyze the message and return JSON with fields: " +
+	"intent (billing, technical, general, sales, complaint, feature_request), " +
+	"priority (low, medium, high), and a one-sentence summary."
+
+const messageSystemPrompt = "You are a customer service response writer for TechCorp. " +
+	"Given the original customer message and the intent classification, " +
+	"write a helpful, professional response."
+
 func main() {
 	http.HandleFunc("/trigger", handleTrigger)
 	http.HandleFunc("/upload", handleUpload)
+	http.HandleFunc("/ask", handleAsk)
 
 	port := ":8080"
 	fmt.Printf("[SUT] Starting server on %s\n", port)
@@ -217,6 +236,126 @@ func handleTrigger(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
 	w.Write([]byte(fmt.Sprintf(`{"status":"ok","user_id":"%s"}`, userID)))
+}
+
+func handleAsk(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read body: "+err.Error(), 400)
+		return
+	}
+	var req askRequest
+	if err := json.Unmarshal(body, &req); err != nil || req.Message == "" {
+		http.Error(w, "missing message", 400)
+		return
+	}
+	fmt.Printf("[SUT] /ask message=%q\n", req.Message)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	// Agent 1: Intent classification.
+	intentReq := geminiRequest{
+		Contents: []geminiContent{
+			{Role: "user", Parts: []geminiPart{{Text: req.Message}}},
+		},
+		SystemInstruction: geminiSystemInstruction{
+			Parts: []geminiPart{{Text: intentSystemPrompt}},
+		},
+		GenerationConfig: geminiGenerationConfig{
+			Temperature:      0.2,
+			TopP:             0.95,
+			TopK:             40,
+			MaxOutputTokens:  256,
+			ResponseMIMEType: "application/json",
+		},
+		SafetySettings: []geminiSafetySetting{
+			{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+			{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+			{Category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+			{Category: "HARM_CATEGORY_DANGEROUS_CONTENT", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+		},
+	}
+
+	classificationJSON := json.RawMessage(`{}`)
+	intentURL := os.Getenv("API_INTENT_URL")
+	if intentURL != "" {
+		payload, err := json.Marshal(intentReq)
+		if err == nil {
+			target := intentURL + "/v1beta/models/gemini-2.0-flash:generateContent"
+			resp, err := client.Post(target, "application/json", bytes.NewReader(payload))
+			if err == nil {
+				respBody, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				var gr geminiResponse
+				if json.Unmarshal(respBody, &gr) == nil &&
+					len(gr.Candidates) > 0 &&
+					len(gr.Candidates[0].Content.Parts) > 0 {
+					raw := gr.Candidates[0].Content.Parts[0].Text
+					if json.Valid([]byte(raw)) {
+						classificationJSON = json.RawMessage(raw)
+					}
+				}
+			} else {
+				fmt.Printf("[SUT] intent call failed: %v\n", err)
+			}
+		}
+	}
+	fmt.Printf("[SUT] classification=%s\n", classificationJSON)
+
+	// Agent 2: Message generation using classification + original message.
+	msgReq := geminiRequest{
+		Contents: []geminiContent{
+			{Role: "user", Parts: []geminiPart{{Text: fmt.Sprintf(
+				"Customer message: %s\n\nIntent classification: %s",
+				req.Message, classificationJSON)}}},
+		},
+		SystemInstruction: geminiSystemInstruction{
+			Parts: []geminiPart{{Text: messageSystemPrompt}},
+		},
+		GenerationConfig: geminiGenerationConfig{
+			Temperature:      0.7,
+			TopP:             0.95,
+			TopK:             40,
+			MaxOutputTokens:  1024,
+			ResponseMIMEType: "text/plain",
+		},
+		SafetySettings: []geminiSafetySetting{
+			{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+			{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+			{Category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+			{Category: "HARM_CATEGORY_DANGEROUS_CONTENT", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+		},
+	}
+
+	responseText := "No response generated"
+	messageURL := os.Getenv("API_MESSAGE_URL")
+	if messageURL != "" {
+		payload, err := json.Marshal(msgReq)
+		if err == nil {
+			target := messageURL + "/v1beta/models/gemini-2.0-flash:generateContent"
+			resp, err := client.Post(target, "application/json", bytes.NewReader(payload))
+			if err == nil {
+				respBody, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				var gr geminiResponse
+				if json.Unmarshal(respBody, &gr) == nil &&
+					len(gr.Candidates) > 0 &&
+					len(gr.Candidates[0].Content.Parts) > 0 {
+					responseText = gr.Candidates[0].Content.Parts[0].Text
+				}
+			} else {
+				fmt.Printf("[SUT] message call failed: %v\n", err)
+			}
+		}
+	}
+
+	out := askResponse{
+		Response:       responseText,
+		Classification: classificationJSON,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	json.NewEncoder(w).Encode(out)
 }
 
 func handleUpload(w http.ResponseWriter, r *http.Request) {

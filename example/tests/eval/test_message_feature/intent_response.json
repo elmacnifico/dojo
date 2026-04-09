@@ -1,0 +1,15 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "{\"intent\":\"feature_request\",\"priority\":\"medium\",\"summary\":\"Customer inquiring about Slack integration for notifications and commands.\"}"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ]
+}

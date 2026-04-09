@@ -1,0 +1,12 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Does TechCorp have a Slack integration? Our team communicates primarily through Slack and it would be great to get notifications and run commands directly from there."
+        }
+      ]
+    }
+  ]
+}

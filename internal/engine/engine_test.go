@@ -752,6 +752,70 @@ func TestMarkFulfilled_UnknownAPI(t *testing.T) {
 	}
 }
 
+// TestProcessRequest_LiveHTTPEvalDefersToResponse verifies that for live HTTP
+// APIs with RequiresEval, ProcessRequest does NOT mark the expectation fulfilled
+// and does NOT call Evaluate on the request payload.
+func TestProcessRequest_LiveHTTPEvalDefersToResponse(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"gemini": {Mode: "live", URL: "https://example.com",
+				ExpectedRequest: &workspace.PayloadSpec{Payload: []byte(`{"prompt":"hello"}`)},
+			},
+		},
+	}
+	active := &engine.ActiveTest{
+		ID:   "t1",
+		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Suite: suite,
+		Expectations: map[string]*engine.Expectation{
+			"gemini": {Target: "gemini", RequiresEval: true},
+		},
+	}
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("t1", active)
+
+	m := eng.ProcessRequest("http", "gemini", []byte(`{"prompt":"hello"}`))
+	if m.Err != nil {
+		t.Fatalf("unexpected error: %v", m.Err)
+	}
+	if m.MatchedID != "t1" {
+		t.Fatalf("expected match t1, got %q", m.MatchedID)
+	}
+	if active.Expectations["gemini"].Fulfilled {
+		t.Error("live HTTP + RequiresEval must NOT be fulfilled in ProcessRequest; should defer to ProcessResponse")
+	}
+}
+
+// TestProcessResponse_HTTPLiveEvalNoExpectedResponse verifies that for live HTTP
+// APIs with RequiresEval and no ExpectedResponse, ProcessResponse evaluates the
+// response payload and marks the expectation fulfilled.
+func TestProcessResponse_HTTPLiveEvalNoExpectedResponse(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"gemini": {Mode: "live", URL: "https://example.com"},
+		},
+	}
+	active := &engine.ActiveTest{
+		ID:   "t1",
+		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Suite: suite,
+		Expectations: map[string]*engine.Expectation{
+			"gemini": {Target: "gemini", RequiresEval: true},
+		},
+	}
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("t1", active)
+
+	eng.ProcessResponse("http", "t1", "gemini", nil, []byte(`{"candidates":[{"content":"response"}]}`))
+	if !active.Expectations["gemini"].Fulfilled {
+		t.Error("expected gemini expectation fulfilled via eval (no ExpectedResponse)")
+	}
+}
+
 // TestBinaryFixturePayload proves that a non-JSON file (here a tiny JPEG) used
 // in `Payload: image.jpg` is loaded from disk and sent byte-for-byte to the SUT
 // entry point. Before the generalised file-extension check in execute.go this

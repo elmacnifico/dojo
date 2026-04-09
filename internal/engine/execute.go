@@ -225,7 +225,7 @@ func (e *Engine) Evaluate(activeTest *ActiveTest, payload []byte) error {
 		return fmt.Errorf("evaluator config missing in dojo.config")
 	}
 
-	evaluator, err := NewAIEvaluator(cfg, "EXPECTED RULE:\n{{.ExpectedRule}}\n\nACTUAL PAYLOAD:\n{{.ActualPayload}}\n\nOutput only JSON.")
+	evaluator, err := NewAIEvaluator(cfg, "You are a strict test evaluator. Decide whether the ACTUAL PAYLOAD satisfies every rule in EXPECTED RULE.\n\nEXPECTED RULE:\n{{.ExpectedRule}}\n\nACTUAL PAYLOAD:\n{{.ActualPayload}}\n\nRespond with ONLY a JSON object in this exact format (no markdown, no extra text):\n{\"pass\": true, \"reason\": \"short explanation\"}\nSet \"pass\" to true if ALL rules are satisfied, false otherwise. Always include a \"reason\".")
 	if err != nil {
 		return fmt.Errorf("creating evaluator: %w", err)
 	}

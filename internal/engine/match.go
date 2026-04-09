@@ -99,14 +99,20 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) doj
 	if activeTest != nil {
 		apiConfig = effectiveAPIConfig(suite, activeTest, apiName)
 
-		if exp, ok := activeTest.Expectations[apiName]; ok && exp.RequiresEval {
+		exp := activeTest.Expectations[apiName]
+
+		// For mock mode, evaluate the request payload immediately since the
+		// response is predetermined. Live mode defers evaluation to
+		// ProcessResponse so the real upstream response can be graded.
+		if exp != nil && exp.RequiresEval && apiConfig.Mode != "live" {
 			if evalErr := e.Evaluate(activeTest, reqPayload); evalErr != nil {
 				result.Err = fmt.Errorf("AI Evaluation failed: %w", evalErr)
 			}
 		}
 
+		hasExpResp := apiConfig.ExpectedResponse != nil && len(apiConfig.ExpectedResponse.Payload) > 0
 		deferToHTTPResponse := protocol == "http" && apiConfig.Mode == "live" &&
-			apiConfig.ExpectedResponse != nil && len(apiConfig.ExpectedResponse.Payload) > 0
+			(hasExpResp || (exp != nil && exp.RequiresEval))
 		if result.Err != nil || !deferToHTTPResponse {
 			activeTest.MarkFulfilled(apiName, result.Err)
 		}
@@ -175,6 +181,8 @@ func (e *Engine) ProcessResponse(protocol, matchedID, apiName string, reqPayload
 			if httpPayloadContains(respPayload, apiConfig.ExpectedResponse.Payload) {
 				e.evalAndMark(activeTest, apiName, respPayload)
 			}
+		} else if exp, ok := activeTest.Expectations[apiName]; ok && exp.RequiresEval {
+			e.evalAndMark(activeTest, apiName, respPayload)
 		}
 	}
 }

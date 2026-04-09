@@ -107,6 +107,9 @@ func (p *HTTPProxy) Start(ctx context.Context, listenAddr string, matchTable doj
 		}
 
 		for k, vv := range r.Header {
+			if strings.EqualFold(k, "Accept-Encoding") {
+				continue
+			}
 			for _, v := range vv {
 				proxyReq.Header.Add(k, v)
 			}
@@ -137,7 +140,13 @@ func (p *HTTPProxy) Start(ctx context.Context, listenAddr string, matchTable doj
 		}
 
 		if m.MatchedID != "" {
-			p.matchTable.ProcessResponse("http", m.MatchedID, apiName, bodyBytes, respBuf.Bytes())
+			respBytes := make([]byte, respBuf.Len())
+			copy(respBytes, respBuf.Bytes())
+			reqCopy := make([]byte, len(bodyBytes))
+			copy(reqCopy, bodyBytes)
+			matchedID := m.MatchedID
+			api := apiName
+			go p.matchTable.ProcessResponse("http", matchedID, api, reqCopy, respBytes)
 		}
 	})
 

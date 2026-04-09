@@ -28,3 +28,6 @@ Icon
 
 # Vendor directory
 vendor/
+
+# Environment variable files with secrets
+.env.var

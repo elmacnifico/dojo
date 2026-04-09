@@ -1,0 +1,4 @@
+Perform -> entrypoints/ask -> Payload: incoming.json
+
+Expect -> intent -> Request: intent_request.json -> Respond: intent_response.json
+Expect -> message -> Request: message_request.json -> Evaluate Response

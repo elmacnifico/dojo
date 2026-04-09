@@ -1,0 +1,12 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Customer message: Does TechCorp have a Slack integration? Our team communicates primarily through Slack and it would be great to get notifications and run commands directly from there.\n\nIntent classification: {\"intent\":\"feature_request\",\"priority\":\"medium\",\"summary\":\"Customer inquiring about Slack integration for notifications and commands.\"}"
+        }
+      ]
+    }
+  ]
+}

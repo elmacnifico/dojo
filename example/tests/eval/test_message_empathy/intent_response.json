@@ -1,0 +1,15 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "{\"intent\":\"complaint\",\"priority\":\"high\",\"summary\":\"Customer frustrated by repeated service outages causing lost work.\"}"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ]
+}
