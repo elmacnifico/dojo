@@ -99,6 +99,7 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 // Default timeout values used when TimeoutConfig fields are zero.
 const (
 	DefaultSUTStartup      = 90 * time.Second
+	DefaultSUTShutdown     = 5 * time.Second
 	DefaultTCPPollInterval = 50 * time.Millisecond
 	DefaultTCPDialTimeout  = 300 * time.Millisecond
 	DefaultHTTPClient      = 5 * time.Second
@@ -108,6 +109,7 @@ const (
 // TimeoutConfig holds configurable timeout durations for the engine.
 type TimeoutConfig struct {
 	SUTStartup      Duration `json:"sut_startup,omitempty"`
+	SUTShutdown     Duration `json:"sut_shutdown,omitempty"`
 	TCPPollInterval Duration `json:"tcp_poll_interval,omitempty"`
 	TCPDialTimeout  Duration `json:"tcp_dial_timeout,omitempty"`
 	HTTPClient      Duration `json:"http_client,omitempty"`
@@ -118,6 +120,9 @@ type TimeoutConfig struct {
 func (tc *TimeoutConfig) ResolveDefaults() {
 	if tc.SUTStartup.Duration == 0 {
 		tc.SUTStartup.Duration = DefaultSUTStartup
+	}
+	if tc.SUTShutdown.Duration == 0 {
+		tc.SUTShutdown.Duration = DefaultSUTShutdown
 	}
 	if tc.TCPPollInterval.Duration == 0 {
 		tc.TCPPollInterval.Duration = DefaultTCPPollInterval
@@ -167,21 +172,35 @@ type Workspace struct {
 	GlobalEval string
 }
 
+// TestResult captures the outcome of a single test execution.
+type TestResult struct {
+	TestName   string        `json:"test_name"`
+	Status     string        `json:"status"` // "pass" or "fail"
+	DurationMs int64         `json:"duration_ms"`
+	Reason     string        `json:"reason,omitempty"`
+	Expected   string        `json:"expected,omitempty"`
+	Actual     string        `json:"actual,omitempty"`
+}
+
 // TestFailure captures a failed assertion during test execution.
 type TestFailure struct {
-	TestName string `json:"test_name"`
-	Expected string `json:"expected"`
-	Actual   string `json:"actual"`
-	Diff     string `json:"diff"`
-	Reason   string `json:"reason"`
+	TestName   string `json:"test_name"`
+	Expected   string `json:"expected"`
+	Actual     string `json:"actual"`
+	Diff       string `json:"diff"`
+	Reason     string `json:"reason"`
+	DurationMs int64  `json:"duration_ms,omitempty"`
 }
 
 // TestSummary encapsulates the overall results of a suite execution.
 type TestSummary struct {
-	TotalRuns int           `json:"total_runs"`
-	Passed    int           `json:"passed"`
-	Failed    int           `json:"failed"`
-	Failures  []TestFailure `json:"failures"`
+	TotalRuns  int           `json:"total_runs"`
+	Passed     int           `json:"passed"`
+	Failed     int           `json:"failed"`
+	DurationMs int64         `json:"duration_ms,omitempty"`
+	SutOutput  string        `json:"sut_output,omitempty"`
+	Failures   []TestFailure `json:"failures"`
+	Results    []TestResult  `json:"results,omitempty"`
 }
 
 // LoadWorkspace recursively discovers all test suites and configurations.

@@ -365,7 +365,7 @@ Expect -> whatsapp -> Request: whatsapp_request.json
 	suiteCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	summary, err := eng.RunSuite(suiteCtx, "suite")
+	summary, err := eng.RunSuite(suiteCtx, "suite", nil)
 	if err != nil {
 		t.Fatalf("RunSuite: %v", err)
 	}

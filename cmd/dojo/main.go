@@ -2,20 +2,32 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"syscall"
 
 	"dojo/internal/engine"
 	"dojo/internal/proxy"
+	"dojo/internal/reporter"
 	"dojo/internal/workspace"
 )
 
 func main() {
 	helpFlag := flag.Bool("help", false, "Show help message")
 	hFlag := flag.Bool("h", false, "Show help message")
+	outputDir := flag.String("output", "", "Write summary.json and summary.md to this directory")
+	oFlag := flag.String("o", "", "Shorthand for --output")
+	formatFlag := flag.String("format", "console", "Output format: console, json, or jsonl")
+	verboseFlag := flag.Bool("verbose", false, "Show debug logs and SUT output")
+	vFlag := flag.Bool("v", false, "Shorthand for --verbose")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stdout, "Dojo: The Universal Black-Box Contract Engine\n\n")
@@ -26,6 +38,7 @@ func main() {
 		fmt.Fprintf(os.Stdout, "\nExample:\n")
 		fmt.Fprintf(os.Stdout, "  dojo run ./example/tests/blackbox\n")
 		fmt.Fprintf(os.Stdout, "  dojo ./example/tests/blackbox\n")
+		fmt.Fprintf(os.Stdout, "  dojo --format json -o results/ ./example/tests/blackbox\n")
 		fmt.Fprintf(os.Stdout, "\nRelative suite paths resolve from the current directory first; if missing,\n")
 		fmt.Fprintf(os.Stdout, "from the Go module root (directory containing go.mod).\n")
 	}
@@ -36,6 +49,13 @@ func main() {
 		flag.Usage()
 		os.Exit(0)
 	}
+
+	verbose := *verboseFlag || *vFlag
+	outDir := *outputDir
+	if outDir == "" {
+		outDir = *oFlag
+	}
+	format := strings.ToLower(*formatFlag)
 
 	args := flag.Args()
 	if len(args) < 1 {
@@ -57,9 +77,14 @@ func main() {
 	workspaceDir := filepath.Dir(suiteDir)
 	suiteName := filepath.Base(suiteDir)
 
-	fmt.Printf("Starting Dojo Engine...\n")
-	fmt.Printf("Workspace Root: %s\n", workspaceDir)
-	fmt.Printf("Target Suite:   %s\n\n", suiteName)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if format == "console" {
+		fmt.Printf("Starting Dojo Engine...\n")
+		fmt.Printf("Workspace Root: %s\n", workspaceDir)
+		fmt.Printf("Target Suite:   %s\n\n", suiteName)
+	}
 
 	ws, err := workspace.LoadWorkspace(workspaceDir)
 	if err != nil {
@@ -73,45 +98,107 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Loaded Suite '%s' successfully.\n", suiteName)
-	fmt.Printf("  Concurrency: %d\n", suite.Config.Concurrency)
-	fmt.Printf("  Tests Found: %d\n", len(suite.Tests))
+	if format == "console" {
+		fmt.Printf("Loaded Suite '%s' successfully.\n", suiteName)
+		fmt.Printf("  Tests:       %d\n", len(suite.Tests))
+		fmt.Printf("  Concurrency: %d\n", suite.Config.Concurrency)
+	}
 
-	fmt.Println("\nBooting Engine and Starting Proxies...")
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	eng := engine.NewEngine(ws, engine.WithLogger(logger))
+	logLevel := slog.LevelInfo
+	if verbose {
+		logLevel = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
+	eng := engine.NewEngine(ws, engine.WithLogger(logger), engine.WithVerbose(verbose))
 
-	// Register generic Adapters
 	eng.RegisterAdapter(proxy.NewHTTPInitiator())
 
-	if err := eng.StartProxies(context.Background(), suiteName); err != nil {
+	if err := eng.StartProxies(ctx, suiteName); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start proxies: %v\n", err)
 		os.Exit(1)
 	}
 	defer eng.StopProxies()
 
-	fmt.Printf("Engine running.\n")
-	fmt.Println("\nValidating Suite and Pre-flight Checks...")
+	if format == "console" {
+		fmt.Printf("\n--- RUNNING SUITE: %s (%d tests, concurrency %d) ---\n\n",
+			suiteName, len(suite.Tests), suite.Config.Concurrency)
+	}
 
-	summary, err := eng.RunSuite(context.Background(), suiteName)
+	var printMu sync.Mutex
+	onResult := func(tr workspace.TestResult) {
+		printMu.Lock()
+		defer printMu.Unlock()
+
+		switch format {
+		case "jsonl":
+			b, _ := json.Marshal(tr)
+			fmt.Println(string(b))
+		case "console":
+			dur := formatDuration(tr.DurationMs)
+			if tr.Status == "pass" {
+				fmt.Printf("  PASS  %s  (%s)\n", tr.TestName, dur)
+			} else {
+				fmt.Printf("  FAIL  %s  (%s): %s\n", tr.TestName, dur, tr.Reason)
+			}
+		}
+	}
+
+	summary, err := eng.RunSuite(ctx, suiteName, onResult)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\nFatal Error during Suite Execution: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("\n--- SUITE EXECUTION COMPLETE ---\n")
-	fmt.Printf("Total Tests: %d\n", summary.TotalRuns)
-	fmt.Printf("Passed:      %d\n", summary.Passed)
-	fmt.Printf("Failed:      %d\n", summary.Failed)
+	sort.Slice(summary.Failures, func(i, j int) bool {
+		return summary.Failures[i].TestName < summary.Failures[j].TestName
+	})
+	sort.Slice(summary.Results, func(i, j int) bool {
+		return summary.Results[i].TestName < summary.Results[j].TestName
+	})
+
+	switch format {
+	case "json":
+		b, _ := json.MarshalIndent(summary, "", "  ")
+		fmt.Println(string(b))
+	case "console":
+		printConsoleSummary(summary)
+	}
+
+	if outDir != "" {
+		r := reporter.NewReporter(outDir)
+		if err := r.Generate(summary); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to write report: %v\n", err)
+		} else if format == "console" {
+			fmt.Printf("\nReport written to %s\n", outDir)
+		}
+	}
 
 	if summary.Failed > 0 {
-		for _, f := range summary.Failures {
-			fmt.Printf("  ❌ %s: %s\n", f.TestName, f.Reason)
-		}
 		os.Exit(1)
-	} else {
-		fmt.Println("  ✅ All tests passed.")
 	}
+}
+
+func printConsoleSummary(summary workspace.TestSummary) {
+	fmt.Printf("\n--- RESULTS ---\n")
+	fmt.Printf("Total: %d   Passed: %d   Failed: %d   Duration: %s\n",
+		summary.TotalRuns, summary.Passed, summary.Failed,
+		formatDuration(summary.DurationMs))
+
+	if summary.Failed > 0 {
+		fmt.Printf("\nFailures:\n")
+		for _, f := range summary.Failures {
+			fmt.Printf("  FAIL  %s: %s\n", f.TestName, f.Reason)
+		}
+	} else {
+		fmt.Printf("\nAll tests passed.\n")
+	}
+}
+
+func formatDuration(ms int64) string {
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	return fmt.Sprintf("%.1fs", float64(ms)/1000)
 }
 
 // findModuleRoot walks dir and parents until a directory containing go.mod is found.
@@ -174,3 +261,4 @@ func resolveSuiteDirectory(suitePath string) (string, error) {
 	}
 	return filepath.Abs(fromMod)
 }
+

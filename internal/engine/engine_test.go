@@ -103,7 +103,7 @@ Expect -> stripe -> Payload: ""
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	summary, err := eng.RunSuite(ctx, "test_suite")
+	summary, err := eng.RunSuite(ctx, "test_suite", nil)
 	if err != nil {
 		t.Fatalf("Suite execution failed: %v", err)
 	}
@@ -204,7 +204,7 @@ Expect -> stripe -> Payload: ""
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	summary, err := eng.RunSuite(ctx, "test_suite")
+	summary, err := eng.RunSuite(ctx, "test_suite", nil)
 	if err != nil {
 		t.Fatalf("Suite execution failed: %v", err)
 	}
@@ -296,7 +296,7 @@ Expect -> stripe -> Payload: ""
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if _, err := eng.RunSuite(ctx, "test_suite"); err != nil {
+	if _, err := eng.RunSuite(ctx, "test_suite", nil); err != nil {
 		t.Fatalf("suite execution: %v", err)
 	}
 
@@ -670,7 +670,7 @@ Expect -> notify
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	summary, err := eng.RunSuite(ctx, "suite")
+	summary, err := eng.RunSuite(ctx, "suite", nil)
 	if err != nil {
 		t.Fatalf("RunSuite: %v", err)
 	}
@@ -695,7 +695,7 @@ func TestStartProxies_SuiteNotFound(t *testing.T) {
 func TestRunSuite_NoActiveSuite(t *testing.T) {
 	t.Parallel()
 	eng := engine.NewEngine(&workspace.Workspace{})
-	_, err := eng.RunSuite(context.Background(), "any")
+	_, err := eng.RunSuite(context.Background(), "any", nil)
 	if err == nil || !strings.Contains(err.Error(), "not initialized") {
 		t.Fatalf("expected not initialized error, got: %v", err)
 	}
@@ -927,7 +927,7 @@ Expect -> vision -> Request: vision_request.json
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	summary, err := eng.RunSuite(ctx, "suite")
+	summary, err := eng.RunSuite(ctx, "suite", nil)
 	if err != nil {
 		t.Fatalf("RunSuite: %v", err)
 	}

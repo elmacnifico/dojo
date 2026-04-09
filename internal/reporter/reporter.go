@@ -57,23 +57,37 @@ func renderMarkdownSummary(summary workspace.TestSummary) (string, error) {
 **Total Runs:** {{.TotalRuns}}
 **Passed:** {{.Passed}}
 **Failed:** {{.Failed}}
+{{- if .DurationMs}}
+**Duration:** {{.DurationMs}}ms
+{{- end}}
+
+{{- if .Results}}
+
+## Results
+
+| Test | Status | Duration |
+|------|--------|----------|
+{{- range .Results}}
+| {{.TestName}} | {{.Status}} | {{.DurationMs}}ms |
+{{- end}}
+{{end}}
 
 {{if .Failures}}## Failures
 
 {{range .Failures}}### {{.TestName}}
 
 **Reason:** {{.Reason}}
-
+{{if .Expected}}
 **Expected:**
 ` + "```json\n{{.Expected}}\n```" + `
-
+{{end}}{{if .Actual}}
 **Actual:**
 ` + "```json\n{{.Actual}}\n```" + `
-
+{{end}}{{if .Diff}}
 **Diff:**
 ` + "```diff\n{{.Diff}}\n```" + `
-
-{{end}}{{else}}🎉 All tests passed!{{end}}`
+{{end}}
+{{end}}{{else}}All tests passed.{{end}}`
 
 	t, err := template.New("summary").Parse(tmpl)
 	if err != nil {

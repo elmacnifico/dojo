@@ -124,7 +124,7 @@ Expect -> postgres -> Payload: ""
 	suiteCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	summary, err := eng.RunSuite(suiteCtx, "test_suite")
+	summary, err := eng.RunSuite(suiteCtx, "test_suite", nil)
 	if err != nil {
 		t.Fatalf("RunSuite failed: %v", err)
 	}
@@ -178,7 +178,7 @@ Expect -> postgres -> Payload: ""
 	suiteCtx2, cancel2 := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel2()
 
-	summary2, err := eng2.RunSuite(suiteCtx2, "test_suite")
+	summary2, err := eng2.RunSuite(suiteCtx2, "test_suite", nil)
 	if err != nil {
 		t.Fatalf("RunSuite 2: %v", err)
 	}

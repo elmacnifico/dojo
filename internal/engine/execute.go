@@ -134,7 +134,9 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 			}
 
 			if !httpPayloadContains(respBody, ep.ExpectedResponse.Payload) {
-				return fmt.Errorf("entrypoint response did not contain expected substring")
+				return fmt.Errorf("entrypoint response mismatch\n  expected (substring): %s\n  actual:              %s",
+					truncate(string(ep.ExpectedResponse.Payload), 200),
+					truncate(string(respBody), 200))
 			}
 		}
 	}
@@ -243,4 +245,11 @@ func (e *Engine) Evaluate(activeTest *ActiveTest, payload []byte) error {
 	}
 
 	return nil
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

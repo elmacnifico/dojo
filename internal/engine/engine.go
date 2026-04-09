@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"dojo/internal/proxy"
@@ -29,6 +30,13 @@ func WithLogger(l *slog.Logger) EngineOption {
 	}
 }
 
+// WithVerbose enables verbose SUT output forwarding.
+func WithVerbose(v bool) EngineOption {
+	return func(e *Engine) {
+		e.verbose = v
+	}
+}
+
 // Engine encapsulates the core Dojo logic for running a Suite.
 type Engine struct {
 	Workspace     *workspace.Workspace
@@ -39,6 +47,20 @@ type Engine struct {
 	sutCancel     context.CancelFunc
 	Adapters      []dojo.Adapter
 	log           *slog.Logger
+	verbose       bool
+
+	sutDead  atomic.Bool
+	sutErr   atomic.Value // stores error
+	sutOutput atomic.Value // stores string
+}
+
+// SUTError returns the SUT crash error if the process exited unexpectedly.
+func (e *Engine) SUTError() error {
+	v := e.sutErr.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(error)
 }
 
 // NewEngine initializes a new engine targeting a loaded Workspace.
@@ -119,10 +141,12 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) error {
 	}
 
 	if suite.Config.SutCommand != "" {
-		sutCtx, cancel := context.WithCancel(context.Background())
+		sutCtx, cancel := context.WithCancel(ctx)
 		e.sutCancel = cancel
 
 		runner := NewSUTRunner(suite.Config.SutCommand, filepath.Join(e.Workspace.BaseDir, suiteName))
+		runner.ShutdownGrace = suite.Config.Timeouts.SUTShutdown.Duration
+		runner.Verbose = e.verbose
 		env := os.Environ()
 		for apiName, apiConfig := range suite.APIs {
 			if apiConfig.Protocol == "postgres" || strings.HasPrefix(apiConfig.URL, "postgres://") {
@@ -136,11 +160,13 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) error {
 		go func() {
 			e.log.Info("starting SUT")
 			res, err := runner.Run(sutCtx)
-			if err != nil && sutCtx.Err() == nil {
-				e.log.Error("SUT failed", "error", err, "output", res.Output)
-			}
 			if res.Output != "" {
-				e.log.Debug("SUT output", "output", res.Output)
+				e.sutOutput.Store(res.Output)
+			}
+			if err != nil && sutCtx.Err() == nil {
+				e.sutDead.Store(true)
+				e.sutErr.Store(err)
+				e.log.Error("SUT exited unexpectedly", "error", err)
 			}
 		}()
 
@@ -149,6 +175,7 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) error {
 
 		if tcpAddr := inferSUTListenTCPAddr(suite); tcpAddr != "" {
 			if err := pollTCPDialReady(waitCtx, tcpAddr, suite.Config.Timeouts.TCPPollInterval.Duration, suite.Config.Timeouts.TCPDialTimeout.Duration); err != nil {
+				e.sutCancel()
 				return fmt.Errorf("waiting for SUT TCP listener on %s: %w", tcpAddr, err)
 			}
 		}
@@ -230,13 +257,16 @@ func (e *Engine) StopProxies() error {
 	return e.HTTPProxy.Stop()
 }
 
-// RunSuite executes all tests in a Suite concurrently.
-func (e *Engine) RunSuite(ctx context.Context, suiteName string) (workspace.TestSummary, error) {
+// RunSuite executes all tests in a Suite concurrently. The optional onResult
+// callback is invoked (from arbitrary goroutines) as each test completes,
+// enabling streaming output in the CLI.
+func (e *Engine) RunSuite(ctx context.Context, suiteName string, onResult func(workspace.TestResult)) (workspace.TestSummary, error) {
 	suite := e.ActiveSuite
 	if suite == nil {
 		return workspace.TestSummary{}, fmt.Errorf("engine not initialized with a suite")
 	}
 
+	suiteStart := time.Now()
 	runner := NewRunner(suite.Config.Concurrency)
 	summary := workspace.TestSummary{
 		TotalRuns: len(suite.Tests),
@@ -251,24 +281,67 @@ func (e *Engine) RunSuite(ctx context.Context, suiteName string) (workspace.Test
 			return func() {
 				defer wg.Done()
 
+				if e.sutDead.Load() {
+					mu.Lock()
+					summary.Failed++
+					reason := "SUT process exited unexpectedly"
+					if sutErr := e.SUTError(); sutErr != nil {
+						reason = sutErr.Error()
+					}
+					tr := workspace.TestResult{TestName: id, Status: "fail", Reason: reason}
+					summary.Results = append(summary.Results, tr)
+					summary.Failures = append(summary.Failures, workspace.TestFailure{
+						TestName: id, Reason: reason,
+					})
+					mu.Unlock()
+					if onResult != nil {
+						onResult(tr)
+					}
+					return
+				}
+
+				start := time.Now()
 				err := e.executeTest(ctx, id, t, suite, suiteName)
+				dur := time.Since(start)
 
 				mu.Lock()
 				defer mu.Unlock()
 
+				tr := workspace.TestResult{
+					TestName:   id,
+					DurationMs: dur.Milliseconds(),
+				}
+
 				if err != nil {
+					tr.Status = "fail"
+					tr.Reason = err.Error()
 					summary.Failed++
 					summary.Failures = append(summary.Failures, workspace.TestFailure{
-						TestName: id,
-						Reason:   err.Error(),
+						TestName:   id,
+						Reason:     err.Error(),
+						DurationMs: dur.Milliseconds(),
 					})
 				} else {
+					tr.Status = "pass"
 					summary.Passed++
+				}
+
+				summary.Results = append(summary.Results, tr)
+				if onResult != nil {
+					onResult(tr)
 				}
 			}
 		}(testID, test))
 	}
 
 	wg.Wait()
+	summary.DurationMs = time.Since(suiteStart).Milliseconds()
+
+	if v := e.sutOutput.Load(); v != nil {
+		if s, ok := v.(string); ok && summary.Failed > 0 {
+			summary.SutOutput = s
+		}
+	}
+
 	return summary, nil
 }
