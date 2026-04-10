@@ -190,6 +190,10 @@ tests/blackbox/
     upload.json                          # How Dojo triggers the SUT (POST, binary payload)
     media_process.json                   # How Dojo triggers the SUT (POST, media processing)
     health.json                          # GET health check (ExpectStatus assertion)
+    not_found.json                       # GET endpoint returning 404
+    auth_redirect.json                   # GET with follow_redirects: false
+    secure_valid.json                    # GET with X-Api-Key header (valid)
+    secure_invalid.json                  # GET with X-Api-Key header (invalid)
   seed/
     schema.sql                           # Shared DDL, run before all tests
   gemini_request.json                    # Suite-level fixture (deep-merge base)
@@ -260,6 +264,18 @@ tests/blackbox/
 
   test_health_check/
     health_check.plan                    # GET /health -> ExpectStatus: "200"
+
+  test_expect_status_error/
+    expect_status_error.plan             # GET /not-found -> ExpectStatus: "404"
+
+  test_auth_redirect/
+    auth_redirect.plan                   # GET /auth -> ExpectStatus: "307" (follow_redirects: false)
+
+  test_secure_header_valid/
+    secure_header_valid.plan             # GET /secure with X-Api-Key header -> ExpectStatus: "200"
+
+  test_secure_header_invalid/
+    secure_header_invalid.plan           # GET /secure with wrong header -> ExpectStatus: "401"
 ```
 
 Key observations:
@@ -367,6 +383,37 @@ Perform -> entrypoints/webhook_bad_token -> ExpectStatus: "403"
 Entrypoints support a `method` field (defaults to `POST`). Set it to `GET`,
 `PUT`, `DELETE`, etc. The `path` may include query parameters (e.g.
 `/webhook?hub.mode=subscribe&hub.verify_token=test`).
+
+Set `follow_redirects: false` in the entrypoint config to capture redirect
+responses (3xx) instead of following them. This is essential for testing OAuth
+auth endpoints:
+
+```json
+{
+  "type": "http",
+  "method": "GET",
+  "path": "/auth?userId=1",
+  "follow_redirects": false
+}
+```
+
+```text
+Perform -> entrypoints/auth -> ExpectStatus: "307"
+```
+
+Custom headers can be set in the entrypoint config for testing HMAC signature
+validation:
+
+```json
+{
+  "type": "http",
+  "path": "/webhook",
+  "headers": {
+    "X-Signature": "precomputed_base64_hmac",
+    "X-Signature-Timestamp": "1234567890"
+  }
+}
+```
 
 ### Postgres Wire Protocol Verification
 
@@ -490,10 +537,11 @@ rather than replacing it.
 
 Here is a concrete end-to-end flow for one test in the example suite:
 
-1. **Boot:** Dojo reads `dojo.config`, discovers 8 tests (`test_user_register`,
+1. **Boot:** Dojo reads `dojo.config`, discovers 12 tests (`test_user_register`,
    `test_user_lookup`, `test_user_update`, `test_user_deactivate`,
    `test_image_upload`, `test_media_process`, `test_perform_postgres`,
-   `test_health_check`), and
+   `test_health_check`, `test_expect_status_error`, `test_auth_redirect`,
+   `test_secure_header_valid`, `test_secure_header_invalid`), and
    loads suite-level API configs from `apis/`.
 
 2. **Fixture resolution:** For `test_user_deactivate`, Dojo finds

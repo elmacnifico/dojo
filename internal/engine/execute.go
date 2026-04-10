@@ -175,6 +175,11 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 		}
 
 		client := &http.Client{Timeout: suite.Config.Timeouts.HTTPClient.Duration}
+		if ep.FollowRedirects != nil && !*ep.FollowRedirects {
+			client.CheckRedirect = func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			}
+		}
 		resp, err := client.Do(req)
 		if err != nil {
 			return fmt.Errorf("entrypoint trigger failed: %w", err)

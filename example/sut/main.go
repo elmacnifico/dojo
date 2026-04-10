@@ -128,6 +128,23 @@ func main() {
 		w.WriteHeader(200)
 		w.Write([]byte("OK"))
 	})
+	http.HandleFunc("/not-found", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		w.Write([]byte("Not Found"))
+	})
+	http.HandleFunc("/auth", func(w http.ResponseWriter, r *http.Request) {
+		state := r.URL.Query().Get("state")
+		http.Redirect(w, r, "https://oauth.example.com/authorize?state="+state, http.StatusTemporaryRedirect)
+	})
+	http.HandleFunc("/secure", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Api-Key") != "test_secret_key" {
+			w.WriteHeader(401)
+			w.Write([]byte("Unauthorized"))
+			return
+		}
+		w.WriteHeader(200)
+		w.Write([]byte(`{"status":"authenticated"}`))
+	})
 	http.HandleFunc("/trigger", handleTrigger)
 	http.HandleFunc("/upload", handleUpload)
 	http.HandleFunc("/media-process", handleMediaProcess)

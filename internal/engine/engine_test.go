@@ -1562,3 +1562,49 @@ func TestExpectStatus(t *testing.T) {
 		t.Error("test_mismatch should have failed but didn't appear in failures")
 	}
 }
+
+func TestFollowRedirects(t *testing.T) {
+	sutServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/auth":
+			http.Redirect(w, r, "https://external.example.com/oauth?state=abc", http.StatusTemporaryRedirect)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer sutServer.Close()
+
+	tmpDir := t.TempDir()
+
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+
+	// follow_redirects: false — should capture the 307 without following
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/auth.json", fmt.Sprintf(`{
+		"type": "http", "method": "GET", "path": "/auth",
+		"url": %q, "follow_redirects": false
+	}`, sutServer.URL))
+
+	testutil.CreateFile(t, tmpDir, "suite/test_redirect/test.plan",
+		`Perform -> entrypoints/auth -> ExpectStatus: "307"`)
+
+	ws, err := workspace.LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace: %v", err)
+	}
+
+	eng := engine.NewEngine(ws)
+	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+		t.Fatalf("StartProxies: %v", err)
+	}
+	defer eng.StopProxies()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	summary, err := eng.RunSuite(ctx, "suite", nil)
+	if err != nil {
+		t.Fatalf("RunSuite: %v", err)
+	}
+	if summary.Failed != 0 {
+		t.Fatalf("expected 0 failures, got %d: %v", summary.Failed, summary.Failures)
+	}
+}

@@ -1,0 +1,8 @@
+{
+  "type": "http",
+  "method": "GET",
+  "path": "/secure",
+  "headers": {
+    "X-Api-Key": "wrong_key"
+  }
+}

@@ -1,0 +1,1 @@
+Perform -> entrypoints/auth_redirect -> ExpectStatus: "307"

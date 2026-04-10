@@ -58,6 +58,7 @@ type EntrypointConfig struct {
 	Path             string            `json:"path"`
 	URL              string            `json:"url,omitempty"`
 	Headers          map[string]string `json:"headers,omitempty"`
+	FollowRedirects  *bool             `json:"follow_redirects,omitempty"`
 	ExpectedResponse *PayloadSpec      `json:"expected_response,omitempty"`
 }
 

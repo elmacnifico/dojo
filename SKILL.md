@@ -245,6 +245,7 @@ Define how Dojo triggers the SUT.
 | `type` | Must be `http`. |
 | `method` | HTTP method. Defaults to `POST`. Set to `GET`, `PUT`, `DELETE`, etc. as needed. |
 | `path` | The SUT endpoint Dojo will call. May include query parameters (e.g. `/webhook?hub.mode=subscribe`). |
+| `follow_redirects` | Boolean. Defaults to `true`. Set to `false` to capture redirect responses (3xx) instead of following them. |
 
 ## The `.plan` DSL
 
@@ -309,6 +310,44 @@ a bad request correctly returns an error:
 
 ```text
 Perform -> entrypoints/webhook_bad_token -> ExpectStatus: "403"
+```
+
+### Example: testing OAuth redirects
+
+To test that an auth endpoint returns a redirect without following it, set
+`follow_redirects: false` in the entrypoint config:
+
+```json
+{
+  "type": "http",
+  "method": "GET",
+  "path": "/auth?userId=1",
+  "follow_redirects": false
+}
+```
+
+```text
+Perform -> entrypoints/auth -> ExpectStatus: "307"
+```
+
+### Example: testing webhook HMAC signature validation
+
+Test correct and incorrect signatures using separate entrypoints with different
+headers. The HMAC must be pre-computed from the known secret + timestamp + body:
+
+```json
+{
+  "type": "http",
+  "path": "/webhook",
+  "headers": {
+    "X-Signature": "precomputed_base64_hmac",
+    "X-Signature-Timestamp": "1234567890"
+  }
+}
+```
+
+```text
+Perform -> entrypoints/webhook_valid_sig -> Payload: incoming.json -> ExpectStatus: "200"
 ```
 
 ### Example: binary payload
