@@ -337,8 +337,8 @@ func TestProcessRequest_PostgresMatchesNormalizedSQL(t *testing.T) {
 		ID:    "test_folder",
 		Suite: suite,
 		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
-		Expectations: map[string]*engine.Expectation{
-			"pgdb": {Target: "pgdb"},
+		Expectations: map[string][]*engine.Expectation{
+			"pgdb": {{Target: "pgdb"}},
 		},
 	}
 	eng := engine.NewEngine(&workspace.Workspace{})
@@ -355,7 +355,7 @@ func TestProcessRequest_PostgresMatchesNormalizedSQL(t *testing.T) {
 	if m.MatchedID != "test_folder" {
 		t.Errorf("MatchedID: got %q", m.MatchedID)
 	}
-	if !active.Expectations["pgdb"].Fulfilled {
+	if !active.Expectations["pgdb"][0].Fulfilled {
 		t.Error("expected postgres expectation fulfilled after normalized match")
 	}
 }
@@ -374,8 +374,8 @@ func TestProcessRequest_SubsetMatchSucceeds(t *testing.T) {
 		ID:    "test_subset",
 		Suite: suite,
 		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
-		Expectations: map[string]*engine.Expectation{
-			"gemini": {Target: "gemini"},
+		Expectations: map[string][]*engine.Expectation{
+			"gemini": {{Target: "gemini"}},
 		},
 	}
 	eng := engine.NewEngine(&workspace.Workspace{})
@@ -406,8 +406,8 @@ func TestProcessRequest_SubsetMismatchFails(t *testing.T) {
 		ID:    "test_nomatch",
 		Suite: suite,
 		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
-		Expectations: map[string]*engine.Expectation{
-			"gemini": {Target: "gemini"},
+		Expectations: map[string][]*engine.Expectation{
+			"gemini": {{Target: "gemini"}},
 		},
 	}
 	eng := engine.NewEngine(&workspace.Workspace{})
@@ -435,8 +435,8 @@ func TestProcessRequest_PostgresContainsMatch(t *testing.T) {
 		ID:    "test_pg_contains",
 		Suite: suite,
 		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
-		Expectations: map[string]*engine.Expectation{
-			"pgdb": {Target: "pgdb"},
+		Expectations: map[string][]*engine.Expectation{
+			"pgdb": {{Target: "pgdb"}},
 		},
 	}
 	eng := engine.NewEngine(&workspace.Workspace{})
@@ -449,6 +449,64 @@ func TestProcessRequest_PostgresContainsMatch(t *testing.T) {
 	}
 	if m.MatchedID != "test_pg_contains" {
 		t.Errorf("MatchedID: got %q, want %q", m.MatchedID, "test_pg_contains")
+	}
+}
+
+func TestProcessRequest_OrderedMultiExpectations(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"gemini": {Mode: "mock", URL: "/v1/generate",
+				OrderedExpectations: []workspace.ExpectationSpec{
+					{
+						ExpectedRequest: &workspace.PayloadSpec{Payload: []byte(`{"role":"intent"}`)},
+						Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"intent":"log_nutrition"}`)},
+					},
+					{
+						ExpectedRequest: &workspace.PayloadSpec{Payload: []byte(`{"role":"conversation"}`)},
+						Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"reply":"Logged!"}`)},
+					},
+				},
+			},
+		},
+	}
+	active := &engine.ActiveTest{
+		ID:    "test_multi",
+		Suite: suite,
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Expectations: map[string][]*engine.Expectation{
+			"gemini": {{Target: "gemini", Index: 0}, {Target: "gemini", Index: 1}},
+		},
+	}
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("test_multi", active)
+
+	// First call matches intent expectation.
+	m1 := eng.ProcessRequest("http", "gemini", []byte(`{"role":"intent","extra":"ignored"}`))
+	if m1.Err != nil {
+		t.Fatalf("first call: unexpected error: %v", m1.Err)
+	}
+	if string(m1.MockResponse) != `{"intent":"log_nutrition"}` {
+		t.Errorf("first call: got response %q", string(m1.MockResponse))
+	}
+	if !active.Expectations["gemini"][0].Fulfilled {
+		t.Error("first expectation should be fulfilled")
+	}
+	if active.Expectations["gemini"][1].Fulfilled {
+		t.Error("second expectation should NOT be fulfilled yet")
+	}
+
+	// Second call matches conversation expectation.
+	m2 := eng.ProcessRequest("http", "gemini", []byte(`{"role":"conversation","context":"stuff"}`))
+	if m2.Err != nil {
+		t.Fatalf("second call: unexpected error: %v", m2.Err)
+	}
+	if string(m2.MockResponse) != `{"reply":"Logged!"}` {
+		t.Errorf("second call: got response %q", string(m2.MockResponse))
+	}
+	if !active.Expectations["gemini"][1].Fulfilled {
+		t.Error("second expectation should be fulfilled")
 	}
 }
 
@@ -508,8 +566,8 @@ func TestProcessResponse_HTTPLiveMatch(t *testing.T) {
 		ID:   "t1",
 		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
-		Expectations: map[string]*engine.Expectation{
-			"ext": {Target: "ext"},
+		Expectations: map[string][]*engine.Expectation{
+			"ext": {{Target: "ext"}},
 		},
 	}
 	eng := engine.NewEngine(&workspace.Workspace{})
@@ -517,7 +575,7 @@ func TestProcessResponse_HTTPLiveMatch(t *testing.T) {
 	eng.Registry.Register("t1", active)
 
 	eng.ProcessResponse("http", "t1", "ext", nil, []byte(`{"data":"success-marker"}`))
-	if !active.Expectations["ext"].Fulfilled {
+	if !active.Expectations["ext"][0].Fulfilled {
 		t.Error("expected fulfilled after matching response")
 	}
 }
@@ -535,8 +593,8 @@ func TestProcessResponse_HTTPLiveMismatch(t *testing.T) {
 		ID:   "t1",
 		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
-		Expectations: map[string]*engine.Expectation{
-			"ext": {Target: "ext"},
+		Expectations: map[string][]*engine.Expectation{
+			"ext": {{Target: "ext"}},
 		},
 	}
 	eng := engine.NewEngine(&workspace.Workspace{})
@@ -544,14 +602,14 @@ func TestProcessResponse_HTTPLiveMismatch(t *testing.T) {
 	eng.Registry.Register("t1", active)
 
 	eng.ProcessResponse("http", "t1", "ext", nil, []byte(`{"data":"wrong"}`))
-	if !active.Expectations["ext"].Fulfilled {
+	if !active.Expectations["ext"][0].Fulfilled {
 		t.Error("expected fulfilled (with error) on mismatch")
 	}
-	if active.Expectations["ext"].Error == nil {
+	if active.Expectations["ext"][0].Error == nil {
 		t.Fatal("expected MismatchError on mismatch, got nil")
 	}
-	if !strings.Contains(active.Expectations["ext"].Error.Error(), "live response mismatch") {
-		t.Errorf("expected 'live response mismatch' in error, got: %v", active.Expectations["ext"].Error)
+	if !strings.Contains(active.Expectations["ext"][0].Error.Error(), "live response mismatch") {
+		t.Errorf("expected 'live response mismatch' in error, got: %v", active.Expectations["ext"][0].Error)
 	}
 }
 
@@ -566,8 +624,8 @@ func TestProcessResponse_HTTPMockSkipped(t *testing.T) {
 		ID:   "t1",
 		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
-		Expectations: map[string]*engine.Expectation{
-			"mockapi": {Target: "mockapi"},
+		Expectations: map[string][]*engine.Expectation{
+			"mockapi": {{Target: "mockapi"}},
 		},
 	}
 	eng := engine.NewEngine(&workspace.Workspace{})
@@ -575,7 +633,7 @@ func TestProcessResponse_HTTPMockSkipped(t *testing.T) {
 	eng.Registry.Register("t1", active)
 
 	eng.ProcessResponse("http", "t1", "mockapi", nil, []byte(`anything`))
-	if active.Expectations["mockapi"].Fulfilled {
+	if active.Expectations["mockapi"][0].Fulfilled {
 		t.Error("mock mode should not fulfill via ProcessResponse")
 	}
 }
@@ -593,8 +651,8 @@ func TestProcessResponse_PostgresExpectedResponseMatch(t *testing.T) {
 		ID:   "t1",
 		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
-		Expectations: map[string]*engine.Expectation{
-			"pgdb": {Target: "pgdb"},
+		Expectations: map[string][]*engine.Expectation{
+			"pgdb": {{Target: "pgdb"}},
 		},
 	}
 	eng := engine.NewEngine(&workspace.Workspace{})
@@ -602,7 +660,7 @@ func TestProcessResponse_PostgresExpectedResponseMatch(t *testing.T) {
 	eng.Registry.Register("t1", active)
 
 	eng.ProcessResponse("postgres", "t1", "", nil, []byte("INSERT 0 1"))
-	if !active.Expectations["pgdb"].Fulfilled {
+	if !active.Expectations["pgdb"][0].Fulfilled {
 		t.Error("expected pgdb expectation fulfilled")
 	}
 }
@@ -618,8 +676,8 @@ func TestProcessResponse_PostgresNoExpectedResponse(t *testing.T) {
 		ID:   "t1",
 		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
-		Expectations: map[string]*engine.Expectation{
-			"pgdb": {Target: "pgdb"},
+		Expectations: map[string][]*engine.Expectation{
+			"pgdb": {{Target: "pgdb"}},
 		},
 	}
 	eng := engine.NewEngine(&workspace.Workspace{})
@@ -628,7 +686,7 @@ func TestProcessResponse_PostgresNoExpectedResponse(t *testing.T) {
 
 	// No expected_response → fulfills immediately on any response
 	eng.ProcessResponse("postgres", "t1", "", nil, []byte("anything"))
-	if !active.Expectations["pgdb"].Fulfilled {
+	if !active.Expectations["pgdb"][0].Fulfilled {
 		t.Error("expected pgdb expectation fulfilled (no expected_response)")
 	}
 }
@@ -646,8 +704,8 @@ func TestProcessResponse_PostgresMismatch(t *testing.T) {
 		ID:   "t1",
 		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
-		Expectations: map[string]*engine.Expectation{
-			"pgdb": {Target: "pgdb"},
+		Expectations: map[string][]*engine.Expectation{
+			"pgdb": {{Target: "pgdb"}},
 		},
 	}
 	eng := engine.NewEngine(&workspace.Workspace{})
@@ -655,7 +713,7 @@ func TestProcessResponse_PostgresMismatch(t *testing.T) {
 	eng.Registry.Register("t1", active)
 
 	eng.ProcessResponse("postgres", "t1", "", nil, []byte("SELECT 1"))
-	if active.Expectations["pgdb"].Fulfilled {
+	if active.Expectations["pgdb"][0].Fulfilled {
 		t.Error("expected NOT fulfilled on mismatch")
 	}
 }
@@ -679,8 +737,8 @@ func TestProcessResponse_PostgresTestOverride(t *testing.T) {
 		ID:   "t1",
 		Test: &workspace.Test{APIs: testAPIs},
 		Suite: suite,
-		Expectations: map[string]*engine.Expectation{
-			"pgdb": {Target: "pgdb"},
+		Expectations: map[string][]*engine.Expectation{
+			"pgdb": {{Target: "pgdb"}},
 		},
 	}
 	eng := engine.NewEngine(&workspace.Workspace{})
@@ -688,7 +746,7 @@ func TestProcessResponse_PostgresTestOverride(t *testing.T) {
 	eng.Registry.Register("t1", active)
 
 	eng.ProcessResponse("postgres", "t1", "", nil, []byte("INSERT 0 1"))
-	if !active.Expectations["pgdb"].Fulfilled {
+	if !active.Expectations["pgdb"][0].Fulfilled {
 		t.Error("expected pgdb fulfilled via test-level override")
 	}
 }
@@ -791,17 +849,17 @@ func TestMarkFulfilled_AllDone(t *testing.T) {
 	t.Parallel()
 	at := &engine.ActiveTest{
 		ID: "t",
-		Expectations: map[string]*engine.Expectation{
-			"a": {Target: "a"},
-			"b": {Target: "b"},
+		Expectations: map[string][]*engine.Expectation{
+			"a": {{Target: "a"}},
+			"b": {{Target: "b"}},
 		},
 	}
-	at.MarkFulfilled("a", nil)
-	if !at.Expectations["a"].Fulfilled {
+	at.MarkFulfilled("a", 0, nil)
+	if !at.Expectations["a"][0].Fulfilled {
 		t.Error("a not fulfilled")
 	}
-	at.MarkFulfilled("b", nil)
-	if !at.Expectations["b"].Fulfilled {
+	at.MarkFulfilled("b", 0, nil)
+	if !at.Expectations["b"][0].Fulfilled {
 		t.Error("b not fulfilled")
 	}
 }
@@ -810,17 +868,17 @@ func TestMarkFulfilled_WithError(t *testing.T) {
 	t.Parallel()
 	at := &engine.ActiveTest{
 		ID: "t",
-		Expectations: map[string]*engine.Expectation{
-			"a": {Target: "a"},
+		Expectations: map[string][]*engine.Expectation{
+			"a": {{Target: "a"}},
 		},
 	}
 	testErr := fmt.Errorf("payload mismatch")
-	at.MarkFulfilled("a", testErr)
-	if !at.Expectations["a"].Fulfilled {
+	at.MarkFulfilled("a", 0, testErr)
+	if !at.Expectations["a"][0].Fulfilled {
 		t.Error("a not fulfilled")
 	}
-	if at.Expectations["a"].Error != testErr {
-		t.Errorf("expected error %v, got %v", testErr, at.Expectations["a"].Error)
+	if at.Expectations["a"][0].Error != testErr {
+		t.Errorf("expected error %v, got %v", testErr, at.Expectations["a"][0].Error)
 	}
 }
 
@@ -828,12 +886,12 @@ func TestMarkFulfilled_UnknownAPI(t *testing.T) {
 	t.Parallel()
 	at := &engine.ActiveTest{
 		ID: "t",
-		Expectations: map[string]*engine.Expectation{
-			"a": {Target: "a"},
+		Expectations: map[string][]*engine.Expectation{
+			"a": {{Target: "a"}},
 		},
 	}
-	at.MarkFulfilled("unknown", nil) // must not panic
-	if at.Expectations["a"].Fulfilled {
+	at.MarkFulfilled("unknown", 0, nil) // must not panic
+	if at.Expectations["a"][0].Fulfilled {
 		t.Error("a should not be fulfilled")
 	}
 }
@@ -854,8 +912,8 @@ func TestProcessRequest_LiveHTTPEvalDefersToResponse(t *testing.T) {
 		ID:   "t1",
 		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
-		Expectations: map[string]*engine.Expectation{
-			"gemini": {Target: "gemini", RequiresEval: true},
+		Expectations: map[string][]*engine.Expectation{
+			"gemini": {{Target: "gemini", RequiresEval: true}},
 		},
 	}
 	eng := engine.NewEngine(&workspace.Workspace{})
@@ -869,7 +927,7 @@ func TestProcessRequest_LiveHTTPEvalDefersToResponse(t *testing.T) {
 	if m.MatchedID != "t1" {
 		t.Fatalf("expected match t1, got %q", m.MatchedID)
 	}
-	if active.Expectations["gemini"].Fulfilled {
+	if active.Expectations["gemini"][0].Fulfilled {
 		t.Error("live HTTP + RequiresEval must NOT be fulfilled in ProcessRequest; should defer to ProcessResponse")
 	}
 }
@@ -889,8 +947,8 @@ func TestProcessResponse_HTTPLiveEvalFailsWithoutConfig(t *testing.T) {
 		ID:   "t1",
 		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
-		Expectations: map[string]*engine.Expectation{
-			"gemini": {Target: "gemini", RequiresEval: true},
+		Expectations: map[string][]*engine.Expectation{
+			"gemini": {{Target: "gemini", RequiresEval: true}},
 		},
 	}
 	eng := engine.NewEngine(&workspace.Workspace{})
@@ -898,13 +956,13 @@ func TestProcessResponse_HTTPLiveEvalFailsWithoutConfig(t *testing.T) {
 	eng.Registry.Register("t1", active)
 
 	eng.ProcessResponse("http", "t1", "gemini", nil, []byte(`{"candidates":[{"content":"response"}]}`))
-	if !active.Expectations["gemini"].Fulfilled {
+	if !active.Expectations["gemini"][0].Fulfilled {
 		t.Error("expected gemini expectation to be marked fulfilled (done)")
 	}
-	if active.Expectations["gemini"].Error == nil {
+	if active.Expectations["gemini"][0].Error == nil {
 		t.Fatal("expected non-nil error because evaluator config is missing")
 	}
-	if got := active.Expectations["gemini"].Error.Error(); !strings.Contains(got, "no eval.md rule found") {
+	if got := active.Expectations["gemini"][0].Error.Error(); !strings.Contains(got, "no eval.md rule found") {
 		t.Errorf("unexpected error message: %s", got)
 	}
 }

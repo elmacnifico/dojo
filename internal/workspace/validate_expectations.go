@@ -9,6 +9,8 @@ import (
 // ValidateUniqueExpectedRequests returns an error if two or more tests in the suite
 // share the same normalized expected request payload for the same API name.
 // This guarantees implicit correlation by full normalized match cannot be ambiguous.
+// Within a single test, duplicate expectations for the same API are allowed
+// (ordered multi-expectations).
 func ValidateUniqueExpectedRequests(suite *Suite) error {
 	type expectKey struct {
 		api  string
@@ -18,16 +20,27 @@ func ValidateUniqueExpectedRequests(suite *Suite) error {
 
 	for testName, test := range suite.Tests {
 		for apiName, cfg := range test.APIs {
-			if cfg.ExpectedRequest == nil || len(cfg.ExpectedRequest.Payload) == 0 {
-				continue
-			}
 			proto := APIProtocolForMatch(cfg)
-			norm := NormalizePayloadForMatch(proto, cfg.ExpectedRequest.Payload)
-			if norm == "" {
-				continue
+
+			// Collect all request payloads for this API (ordered + single).
+			var payloads [][]byte
+			for _, spec := range cfg.OrderedExpectations {
+				if spec.ExpectedRequest != nil && len(spec.ExpectedRequest.Payload) > 0 {
+					payloads = append(payloads, spec.ExpectedRequest.Payload)
+				}
 			}
-			k := expectKey{api: apiName, norm: norm}
-			seen[k] = append(seen[k], testName)
+			if len(payloads) == 0 && cfg.ExpectedRequest != nil && len(cfg.ExpectedRequest.Payload) > 0 {
+				payloads = append(payloads, cfg.ExpectedRequest.Payload)
+			}
+
+			for _, p := range payloads {
+				norm := NormalizePayloadForMatch(proto, p)
+				if norm == "" {
+					continue
+				}
+				k := expectKey{api: apiName, norm: norm}
+				seen[k] = append(seen[k], testName)
+			}
 		}
 	}
 

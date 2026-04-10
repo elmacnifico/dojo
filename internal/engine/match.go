@@ -46,9 +46,16 @@ func payloadsMatch(cfg workspace.APIConfig, actual, expected []byte) bool {
 	return workspace.JSONSubsetMatch(actual, expected)
 }
 
+// matchHit records a matched active test and the expectation index within it.
+type matchHit struct {
+	test *ActiveTest
+	idx  int
+}
+
 // ProcessRequest correlates the intercepted request to an active test by
-// comparing normalized actual and expected request payloads. No separate
-// correlation config is used; suite load enforces unique expectations per API.
+// comparing actual and expected request payloads using subset matching. For
+// APIs with ordered expectations, the first unfulfilled expectation whose
+// payload matches is used.
 func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) dojo.MatchResult {
 	if e.ActiveSuite == nil {
 		return dojo.MatchResult{Err: fmt.Errorf("no active suite")}
@@ -71,43 +78,66 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) doj
 
 	var result dojo.MatchResult
 
-	var matched []*ActiveTest
+	var hits []matchHit
 	e.Registry.ForEach(func(_ string, at *ActiveTest) bool {
-		if _, has := at.Expectations[apiName]; !has {
+		exps := at.Expectations[apiName]
+		if len(exps) == 0 {
 			return true
 		}
 		eff := effectiveAPIConfig(suite, at, apiName)
+
+		// Try ordered expectations first.
+		if len(eff.OrderedExpectations) > 0 {
+			for i, spec := range eff.OrderedExpectations {
+				if i >= len(exps) || exps[i].Fulfilled {
+					continue
+				}
+				if spec.ExpectedRequest == nil || len(spec.ExpectedRequest.Payload) == 0 {
+					continue
+				}
+				if payloadsMatch(eff, reqPayload, spec.ExpectedRequest.Payload) {
+					hits = append(hits, matchHit{test: at, idx: i})
+					return true
+				}
+			}
+			return true
+		}
+
+		// Fallback: single ExpectedRequest (backward compat).
 		if eff.ExpectedRequest == nil || len(eff.ExpectedRequest.Payload) == 0 {
 			return true
 		}
+		if exps[0].Fulfilled {
+			return true
+		}
 		if payloadsMatch(eff, reqPayload, eff.ExpectedRequest.Payload) {
-			matched = append(matched, at)
+			hits = append(hits, matchHit{test: at, idx: 0})
 		}
 		return true
 	})
 
 	var activeTest *ActiveTest
-	switch len(matched) {
+	var matchedIdx int
+	switch len(hits) {
 	case 0:
 		activeTest = nil
 	case 1:
-		activeTest = matched[0]
+		activeTest = hits[0].test
+		matchedIdx = hits[0].idx
 		result.MatchedID = activeTest.ID
 	default:
 		return dojo.MatchResult{
-			Err: fmt.Errorf("ambiguous request match for API %q: %d active tests share the same normalized expectation (suite load validation should have prevented this)", apiName, len(matched)),
+			Err: fmt.Errorf("ambiguous request match for API %q: %d active tests matched", apiName, len(hits)),
 		}
 	}
 
 	if activeTest != nil {
 		apiConfig = effectiveAPIConfig(suite, activeTest, apiName)
 
-		exp := activeTest.Expectations[apiName]
+		exps := activeTest.Expectations[apiName]
+		exp := exps[matchedIdx]
 
-		// For mock mode, evaluate the request payload immediately since the
-		// response is predetermined. Live mode defers evaluation to
-		// ProcessResponse so the real upstream response can be graded.
-		if exp != nil && exp.RequiresEval && apiConfig.Mode != "live" {
+		if exp.RequiresEval && apiConfig.Mode != "live" {
 			if evalErr := e.Evaluate(activeTest, reqPayload); evalErr != nil {
 				result.Err = fmt.Errorf("AI Evaluation failed: %w", evalErr)
 			}
@@ -115,9 +145,16 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) doj
 
 		hasExpResp := apiConfig.ExpectedResponse != nil && len(apiConfig.ExpectedResponse.Payload) > 0
 		deferToHTTPResponse := protocol == "http" && apiConfig.Mode == "live" &&
-			(hasExpResp || (exp != nil && exp.RequiresEval))
+			(hasExpResp || exp.RequiresEval)
 		if result.Err != nil || !deferToHTTPResponse {
-			activeTest.MarkFulfilled(apiName, result.Err)
+			activeTest.MarkFulfilled(apiName, matchedIdx, result.Err)
+		}
+
+		// Use the matched expectation's specific response if available.
+		if len(apiConfig.OrderedExpectations) > matchedIdx {
+			if resp := apiConfig.OrderedExpectations[matchedIdx].Response; resp != nil {
+				apiConfig.DefaultResponse = resp
+			}
 		}
 	}
 
@@ -157,15 +194,20 @@ func (e *Engine) ProcessResponse(protocol, matchedID, apiName string, reqPayload
 				if testAPI, ok := activeTest.Test.APIs[pgName]; ok {
 					apiConfig = testAPI
 				}
+				unfulfilled := activeTest.FirstUnfulfilled(pgName)
+				idx := 0
+				if unfulfilled != nil {
+					idx = unfulfilled.Index
+				}
 				if apiConfig.ExpectedResponse != nil && len(apiConfig.ExpectedResponse.Payload) > 0 {
 					expectedStr := string(apiConfig.ExpectedResponse.Payload)
 					actualStr := string(respPayload)
 
 					if strings.Contains(actualStr, expectedStr) {
-						e.evalAndMark(activeTest, pgName, respPayload)
+						e.evalAndMark(activeTest, pgName, idx, respPayload)
 					}
 				} else {
-					e.evalAndMark(activeTest, pgName, respPayload)
+					e.evalAndMark(activeTest, pgName, idx, respPayload)
 				}
 			}
 		}
@@ -181,32 +223,38 @@ func (e *Engine) ProcessResponse(protocol, matchedID, apiName string, reqPayload
 			return
 		}
 		if apiConfig.ExpectedResponse != nil && len(apiConfig.ExpectedResponse.Payload) > 0 {
+			unfulfilled := activeTest.FirstUnfulfilled(apiName)
+			idx := 0
+			if unfulfilled != nil {
+				idx = unfulfilled.Index
+			}
 			if httpPayloadContains(respPayload, apiConfig.ExpectedResponse.Payload) {
-				e.evalAndMark(activeTest, apiName, respPayload)
+				e.evalAndMark(activeTest, apiName, idx, respPayload)
 			} else {
 				exp := truncate(string(apiConfig.ExpectedResponse.Payload), 500)
 				act := truncate(string(respPayload), 500)
-				activeTest.MarkFulfilled(apiName, &MismatchError{
+				activeTest.MarkFulfilled(apiName, idx, &MismatchError{
 					Reason:   fmt.Sprintf("live response mismatch for API %s\n  expected (substring): %s\n  actual:              %s", apiName, exp, act),
 					Expected: exp,
 					Actual:   act,
 				})
 			}
-		} else if exp, ok := activeTest.Expectations[apiName]; ok && exp.RequiresEval {
-			e.evalAndMark(activeTest, apiName, respPayload)
+		} else if unfulfilled := activeTest.FirstUnfulfilled(apiName); unfulfilled != nil && unfulfilled.RequiresEval {
+			e.evalAndMark(activeTest, apiName, unfulfilled.Index, respPayload)
 		}
 	}
 }
 
 // evalAndMark runs AI evaluation (if required) and marks the expectation fulfilled.
-func (e *Engine) evalAndMark(activeTest *ActiveTest, apiName string, payload []byte) {
+func (e *Engine) evalAndMark(activeTest *ActiveTest, apiName string, idx int, payload []byte) {
 	var checkErr error
-	if exp, ok := activeTest.Expectations[apiName]; ok && exp.RequiresEval {
+	exps := activeTest.Expectations[apiName]
+	if idx < len(exps) && exps[idx].RequiresEval {
 		if err := e.Evaluate(activeTest, payload); err != nil {
 			checkErr = fmt.Errorf("AI Evaluation failed: %w", err)
 		}
 	}
-	activeTest.MarkFulfilled(apiName, checkErr)
+	activeTest.MarkFulfilled(apiName, idx, checkErr)
 }
 
 func httpPayloadContains(actual, expected []byte) bool {

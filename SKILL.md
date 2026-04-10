@@ -62,6 +62,27 @@ Minimal JSON file at the suite root:
 | `evaluator` | no | AI evaluation config (see below). |
 | `timeouts` | no | Override default timeouts (see below). |
 
+### Environment files (convention)
+
+Dojo automatically loads `.env` and `.env.local` from the suite directory into
+both the Dojo process and the SUT process. This maps Dojo's injected
+`API_<NAME>_URL` vars to the SUT's expected env var names, provides static test
+configuration, and supplies API keys needed by the evaluator.
+
+- **`.env`** -- committed. URL mappings, test constants.
+- **`.env.local`** -- gitignored. Real API keys and secrets.
+
+`.env.local` values override `.env`. Values support `$VAR` expansion against
+Dojo's own injected env vars (e.g. `DATABASE_URL=$API_POSTGRES_URL`).
+
+Example `.env`:
+```
+GEMINI_BASE_URL=$API_GEMINI_URL
+WHATSAPP_BASE_URL=$API_WHATSAPP_URL
+DATABASE_URL=$API_POSTGRES_URL
+ENVIRONMENT=production
+```
+
 ### Evaluator config (optional)
 
 ```json
@@ -207,6 +228,24 @@ Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.jso
 ```
 
 Non-JSON files are sent as raw bytes.
+
+### Example: ordered multi-expectations
+
+When a SUT makes multiple calls to the same API in one test (e.g., an intent
+agent call followed by a conversation agent call to the same Gemini endpoint),
+use multiple `Expect` lines. They are matched in declaration order:
+
+```text
+Perform -> entrypoints/webhook -> Payload: incoming.json
+
+Expect -> gemini -> Request: intent_request.json -> Respond: intent_response.json
+Expect -> gemini -> Request: conv_request.json -> Respond: conv_response.json
+Expect -> whatsapp -> Request: whatsapp_request.json
+```
+
+The first Gemini call matches `intent_request.json` and gets `intent_response.json`.
+The second Gemini call matches `conv_request.json` and gets `conv_response.json`.
+Each expectation is fulfilled independently.
 
 ### Example: AI evaluation
 

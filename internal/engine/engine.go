@@ -51,6 +51,7 @@ type Engine struct {
 	sutDead     atomic.Bool
 	sutDeadCh   chan struct{} // closed when SUT crashes; used to unblock waiting tests
 	sutDeadOnce sync.Once    // prevents double-close panic on sutDeadCh
+	sutDoneCh   chan struct{} // closed when SUT goroutine returns (normal or crash)
 	sutErr      atomic.Value // stores error
 	sutOutput   atomic.Value // stores string
 }
@@ -143,7 +144,9 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) error {
 		sutCtx, cancel := context.WithCancel(ctx)
 		e.sutCancel = cancel
 
-		runner := NewSUTRunner(suite.Config.SutCommand, filepath.Join(e.Workspace.BaseDir, suiteName))
+		suiteDir := filepath.Join(e.Workspace.BaseDir, suiteName)
+		runner := NewSUTRunner(suite.Config.SutCommand, suiteDir)
+		runner.suiteDir = suiteDir
 		runner.ShutdownGrace = suite.Config.Timeouts.SUTShutdown.Duration
 		runner.Verbose = e.verbose
 		env := os.Environ()
@@ -155,9 +158,11 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) error {
 			}
 		}
 		runner.Env = env
+		e.sutDoneCh = make(chan struct{})
 
 		go func() {
-			e.log.Info("starting SUT")
+			defer close(e.sutDoneCh)
+			e.log.Debug("starting SUT")
 			res, err := runner.Run(sutCtx)
 			if res.Output != "" {
 				e.sutOutput.Store(res.Output)
@@ -247,9 +252,14 @@ func pollTCPDialReady(ctx context.Context, addr string, pollInterval, dialTimeou
 }
 
 // StopProxies gracefully tears down any running proxies and the attached SUT.
+// It signals the SUT to stop and waits for it to exit before tearing down
+// proxies, so the SUT can close its connections cleanly.
 func (e *Engine) StopProxies() error {
 	if e.sutCancel != nil {
 		e.sutCancel()
+	}
+	if e.sutDoneCh != nil {
+		<-e.sutDoneCh
 	}
 	var pgErr error
 	if e.PostgresProxy.Addr() != "" {

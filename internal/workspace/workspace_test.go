@@ -186,7 +186,7 @@ func TestLoadWorkspace_DuplicateExpectedRequestAfterWiring(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":2}`)
 	testutil.CreateFile(t, tmpDir, "suite/apis/stripe.json", `{
 		"mode": "mock",
 		"url": "/v1/charge",

@@ -91,6 +91,8 @@ func main() {
 		fmt.Printf("Target Suite:   %s\n\n", suiteName)
 	}
 
+	engine.LoadSuiteEnvFiles(suiteDir)
+
 	ws, err := workspace.LoadWorkspace(workspaceDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load workspace: %v\n", err)

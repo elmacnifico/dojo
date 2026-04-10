@@ -31,3 +31,4 @@ vendor/
 
 # Environment variable files with secrets
 .env.var
+.env.local

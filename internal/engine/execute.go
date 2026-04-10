@@ -86,16 +86,18 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 		Test:         test,
 		Suite:        suite,
 		Ctx:          ctx,
-		Expectations: make(map[string]*Expectation),
+		Expectations: make(map[string][]*Expectation),
 		done:         make(chan struct{}),
 	}
 
+	expIdx := make(map[string]int) // tracks next index per API
 	for _, l := range doc.Lines {
 		if strings.ToLower(l.Action) == "expect" {
 			apiName := l.Target
+			idx := expIdx[apiName]
 			exp := &Expectation{
-				Target:    apiName,
-				Fulfilled: false,
+				Target: apiName,
+				Index:  idx,
 			}
 
 			for _, clause := range l.Clauses {
@@ -103,7 +105,8 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 					exp.RequiresEval = true
 				}
 			}
-			active.Expectations[apiName] = exp
+			active.Expectations[apiName] = append(active.Expectations[apiName], exp)
+			expIdx[apiName] = idx + 1
 		}
 	}
 
@@ -166,17 +169,28 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 		return fmt.Errorf("SUT process crashed while test was running: %v", e.SUTError())
 	case <-ctx.Done():
 		var unfulfilled []string
-		for api, exp := range active.Expectations {
-			if !exp.Fulfilled {
-				unfulfilled = append(unfulfilled, api)
+		for api, exps := range active.Expectations {
+			for i, exp := range exps {
+				if !exp.Fulfilled {
+					if len(exps) > 1 {
+						unfulfilled = append(unfulfilled, fmt.Sprintf("%s[%d]", api, i))
+					} else {
+						unfulfilled = append(unfulfilled, api)
+					}
+				}
 			}
 		}
 		return fmt.Errorf("test timed out waiting for expectations: %v", unfulfilled)
 	}
 
-	for api, exp := range active.Expectations {
-		if exp.Error != nil {
-			return fmt.Errorf("expectation for %s failed: %w", api, exp.Error)
+	for api, exps := range active.Expectations {
+		for i, exp := range exps {
+			if exp.Error != nil {
+				if len(exps) > 1 {
+					return fmt.Errorf("expectation for %s[%d] failed: %w", api, i, exp.Error)
+				}
+				return fmt.Errorf("expectation for %s failed: %w", api, exp.Error)
+			}
 		}
 	}
 
@@ -229,7 +243,7 @@ func (e *Engine) runSeeds(dbURL string, seedDir string) error {
 			if _, err := db.Exec(string(b)); err != nil {
 				return fmt.Errorf("failed to execute seed script %s: %w", scriptPath, err)
 			}
-			e.log.Info("executed seed script", "path", scriptPath)
+			e.log.Debug("executed seed script", "path", scriptPath)
 		}
 	}
 

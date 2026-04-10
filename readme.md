@@ -417,7 +417,6 @@ in-flight tests and reports each as failed with the crash reason.
 
 * Go 1.24+
 * Docker (for integration tests and spinning up dependencies)
-* `GEMINI_API_KEY` exported in your environment (for AI evaluations)
 
 ### Running a Suite
 
@@ -432,10 +431,36 @@ dojo --format json -o results/ ./example/tests/blackbox
 
 Dojo will:
 
-1. Read `dojo.config` and configure environment variables to route SUT traffic
+1. Load `.env` and `.env.local` from the suite directory (if present) into the
+   process environment.
+2. Read `dojo.config` and configure environment variables to route SUT traffic
    through Dojo's local proxies.
-2. Boot your application as a child process (when `sut_command` is set).
-3. Spin up concurrent test workers (up to the configured `concurrency` limit).
-4. Execute all `Perform` triggers and wait for `Expect` matches.
-5. Tear down the application and print the verdict (pass `--output` to write
+3. Boot your application as a child process (when `sut_command` is set).
+4. Spin up concurrent test workers (up to the configured `concurrency` limit).
+5. Execute all `Perform` triggers and wait for `Expect` matches.
+6. Tear down the application and print the verdict (pass `--output` to write
    `summary.json` and `summary.md` to disk).
+
+### Environment Files
+
+Each suite can have `.env` and `.env.local` files in its directory. Dojo loads
+them (in that order) into both the Dojo process and the SUT process before
+anything else runs.
+
+- **`.env`** — committed to git. Use for URL mappings and test constants.
+- **`.env.local`** — gitignored. Use for real API keys and secrets.
+
+`.env.local` values override `.env`. Values support `$VAR` expansion against
+Dojo's injected env vars (e.g. `DATABASE_URL=$API_POSTGRES_URL`).
+
+Example `.env`:
+```
+GEMINI_BASE_URL=$API_GEMINI_URL
+DATABASE_URL=$API_POSTGRES_URL
+ENVIRONMENT=production
+```
+
+Example `.env.local`:
+```
+GEMINI_API_KEY=your-actual-key
+```

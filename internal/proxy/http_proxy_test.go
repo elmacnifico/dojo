@@ -72,8 +72,8 @@ func TestHTTPProxy(t *testing.T) {
 		ID:    "test_123",
 		Test:  ws.Suites["test"].Tests["test_123"],
 		Suite: ws.Suites["test"],
-		Expectations: map[string]*engine.Expectation{
-			"mockAPI": {Target: "mockAPI"},
+		Expectations: map[string][]*engine.Expectation{
+			"mockAPI": {{Target: "mockAPI"}},
 		},
 	}
 	eng.Registry.Register("test_123", activeTest)
@@ -100,7 +100,7 @@ func TestHTTPProxy(t *testing.T) {
 		t.Errorf("Expected mocked response, got: %s", string(mockBody))
 	}
 	
-	if !activeTest.Expectations["mockAPI"].Fulfilled {
+	if !activeTest.Expectations["mockAPI"][0].Fulfilled {
 		t.Errorf("Expected mockAPI expectation to be fulfilled")
 	}
 

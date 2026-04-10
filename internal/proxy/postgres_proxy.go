@@ -106,7 +106,7 @@ func isConnClosed(err error) bool {
 	}
 	// pgproto3 wraps errors without preserving the chain, so fall back to string matching.
 	msg := err.Error()
-	return strings.Contains(msg, "closed")
+	return strings.Contains(msg, "closed") || strings.Contains(msg, "reset by peer")
 }
 
 func (p *PostgresProxy) addConn(c net.Conn) {
@@ -354,7 +354,13 @@ func (p *PostgresProxy) acceptLoop() {
 
 		if !isWireMock {
 			go func() {
-				if _, err := io.Copy(targetConn, tee); err != nil && !isConnClosed(err) {
+				<-p.ctx.Done()
+				clientConn.Close()
+				targetConn.Close()
+			}()
+
+			go func() {
+				if _, err := io.Copy(targetConn, tee); err != nil && !isConnClosed(err) && p.ctx.Err() == nil {
 					p.log.Warn("client→upstream copy error", "error", err)
 				}
 			}()
@@ -364,7 +370,7 @@ func (p *PostgresProxy) acceptLoop() {
 				proxy:      p,
 				clientConn: clientConn,
 			}
-			if _, err := io.Copy(clientConn, scanner); err != nil && !isConnClosed(err) {
+			if _, err := io.Copy(clientConn, scanner); err != nil && !isConnClosed(err) && p.ctx.Err() == nil {
 				p.log.Warn("upstream→client copy error", "error", err)
 			}
 		} else {
@@ -376,7 +382,8 @@ func (p *PostgresProxy) acceptLoop() {
 	}
 }
 
-// Stop terminates the proxy listener.
+// Stop terminates the proxy listener and closes all active connections so
+// that I/O goroutines unblock and the WaitGroup drains.
 func (p *PostgresProxy) Stop() error {
 	if p.cancel != nil {
 		p.cancel()
@@ -384,6 +391,11 @@ func (p *PostgresProxy) Stop() error {
 	if p.listener != nil {
 		p.listener.Close()
 	}
+	p.mu.Lock()
+	for c := range p.conns {
+		c.Close()
+	}
+	p.mu.Unlock()
 	p.wg.Wait()
 	return nil
 }

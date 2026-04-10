@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -8,6 +9,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -21,6 +24,7 @@ func NewCommand(ctx context.Context, name string, arg ...string) *exec.Cmd {
 type SUTRunner struct {
 	binaryPath    string
 	workDir       string
+	suiteDir      string
 	Env           []string
 	ShutdownGrace time.Duration
 	Verbose       bool
@@ -80,9 +84,16 @@ func (pw *prefixWriter) Write(p []byte) (int, error) {
 }
 
 // Run executes the SUT, injecting the configured environment variables.
+// It loads .env and .env.local from the suite directory (if they exist),
+// expanding $VAR references against the already-injected env vars.
 func (r *SUTRunner) Run(ctx context.Context) (SUTResult, error) {
+	env := r.Env
+	if r.suiteDir != "" {
+		env = loadEnvFiles(env, r.suiteDir)
+	}
+
 	cmd := exec.CommandContext(ctx, "sh", "-c", r.binaryPath)
-	cmd.Env = r.Env
+	cmd.Env = env
 	if r.workDir != "" {
 		cmd.Dir = r.workDir
 	}
@@ -131,4 +142,101 @@ func (r *SUTRunner) Run(ctx context.Context) (SUTResult, error) {
 	result.CrashEvent = false
 
 	return result, nil
+}
+
+// LoadSuiteEnvFiles loads .env and .env.local from suiteDir into the process
+// environment (os.Setenv). Call before workspace loading so that os.ExpandEnv
+// in API configs and os.Getenv for evaluator keys both see the values.
+func LoadSuiteEnvFiles(suiteDir string) {
+	env := os.Environ()
+	for _, name := range []string{".env", ".env.local"} {
+		path := filepath.Join(suiteDir, name)
+		parsed, err := parseEnvFile(path)
+		if err != nil {
+			continue
+		}
+		for _, kv := range parsed {
+			expanded := expandEnvVars(kv, env)
+			env = setEnv(env, expanded)
+			if idx := strings.IndexByte(expanded, '='); idx >= 0 {
+				os.Setenv(expanded[:idx], expanded[idx+1:])
+			}
+		}
+	}
+}
+
+// loadEnvFiles reads .env and .env.local from dir (if they exist) and appends
+// parsed KEY=VALUE pairs to base. Values support $VAR expansion against the
+// combined environment built so far.
+func loadEnvFiles(base []string, dir string) []string {
+	env := append([]string(nil), base...)
+	for _, name := range []string{".env", ".env.local"} {
+		path := filepath.Join(dir, name)
+		parsed, err := parseEnvFile(path)
+		if err != nil {
+			continue
+		}
+		for _, kv := range parsed {
+			expanded := expandEnvVars(kv, env)
+			env = setEnv(env, expanded)
+		}
+	}
+	return env
+}
+
+// parseEnvFile reads a file and returns KEY=VALUE lines, skipping comments
+// and blank lines. Inline comments after values are not stripped.
+func parseEnvFile(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.Contains(line, "=") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return lines, scanner.Err()
+}
+
+// expandEnvVars replaces $VAR references in a KEY=VALUE string with values
+// from the env slice. Only the value portion (after the first '=') is expanded.
+func expandEnvVars(kv string, env []string) string {
+	idx := strings.IndexByte(kv, '=')
+	if idx < 0 {
+		return kv
+	}
+	key := kv[:idx]
+	val := kv[idx+1:]
+	val = os.Expand(val, func(name string) string {
+		prefix := name + "="
+		for i := len(env) - 1; i >= 0; i-- {
+			if strings.HasPrefix(env[i], prefix) {
+				return env[i][len(prefix):]
+			}
+		}
+		return ""
+	})
+	return key + "=" + val
+}
+
+// setEnv updates or appends a KEY=VALUE in the env slice.
+func setEnv(env []string, kv string) []string {
+	key := kv[:strings.IndexByte(kv, '=')+1]
+	for i, e := range env {
+		if strings.HasPrefix(e, key) {
+			env[i] = kv
+			return env
+		}
+	}
+	return append(env, kv)
 }

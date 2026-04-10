@@ -26,6 +26,14 @@ type DefaultResponse struct {
 	Payload []byte `json:"-"`
 }
 
+// ExpectationSpec pairs an expected request with the response to return.
+// Used by OrderedExpectations for multi-expectation plans.
+type ExpectationSpec struct {
+	ExpectedRequest *PayloadSpec
+	Response        *DefaultResponse
+	RequiresEval    bool
+}
+
 // APIConfig controls the mode and URL behavior for an outbound SUT dependency.
 type APIConfig struct {
 	Protocol         string            `json:"protocol,omitempty"` // "http", "postgres" (defaults to "http")
@@ -36,6 +44,10 @@ type APIConfig struct {
 	ExpectedRequest  *PayloadSpec      `json:"expected_request,omitempty"`
 	ExpectedResponse *PayloadSpec      `json:"expected_response,omitempty"`
 	DefaultResponse  *DefaultResponse  `json:"default_response,omitempty"`
+
+	// OrderedExpectations holds multiple (request, response) pairs for plans
+	// with more than one Expect line targeting the same API.
+	OrderedExpectations []ExpectationSpec `json:"-"`
 }
 
 // EntrypointConfig represents how Dojo triggers the SUT to start a test.
@@ -380,8 +392,10 @@ func LoadWorkspace(baseDir string) (*Workspace, error) {
 				}
 			}
 
-			if err := ValidateUniqueExpectedRequests(suite); err != nil {
-				return nil, fmt.Errorf("suite %s: %w", e.Name(), err)
+			if suite.Config.Concurrency > 1 {
+				if err := ValidateUniqueExpectedRequests(suite); err != nil {
+					return nil, fmt.Errorf("suite %s: %w", e.Name(), err)
+				}
 			}
 
 			ws.Suites[e.Name()] = suite
@@ -417,6 +431,22 @@ func CopyAPIConfig(src APIConfig) APIConfig {
 		r.Payload = cloneBytes(src.DefaultResponse.Payload)
 		dst.DefaultResponse = &r
 	}
+	if len(src.OrderedExpectations) > 0 {
+		dst.OrderedExpectations = make([]ExpectationSpec, len(src.OrderedExpectations))
+		for i, s := range src.OrderedExpectations {
+			if s.ExpectedRequest != nil {
+				e := *s.ExpectedRequest
+				e.Payload = cloneBytes(s.ExpectedRequest.Payload)
+				dst.OrderedExpectations[i].ExpectedRequest = &e
+			}
+			if s.Response != nil {
+				r := *s.Response
+				r.Payload = cloneBytes(s.Response.Payload)
+				dst.OrderedExpectations[i].Response = &r
+			}
+			dst.OrderedExpectations[i].RequiresEval = s.RequiresEval
+		}
+	}
 	return dst
 }
 
@@ -434,6 +464,9 @@ func cloneBytes(b []byte) []byte {
 // API config is copied from the suite when the test does not already have an
 // override. Fixture payloads are resolved via [resolvePayload] (test dir first,
 // suite dir fallback, deep merge for JSON).
+//
+// Multiple Expect lines for the same API produce ordered expectations: the
+// engine matches them in declaration order against incoming requests.
 func wireFixturesFromPlan(doc *ParsedDocument, test *Test, suite *Suite, testPath, suitePath string) error {
 	for _, line := range doc.Lines {
 		if strings.ToLower(line.Action) != "expect" {
@@ -450,19 +483,66 @@ func wireFixturesFromPlan(doc *ParsedDocument, test *Test, suite *Suite, testPat
 		}
 		cfg := test.APIs[apiName]
 
+		var spec ExpectationSpec
+		hasRequest := false
 		for _, clause := range line.Clauses {
 			if clause.Value == nil {
 				continue
 			}
 			switch strings.ToLower(clause.Key) {
 			case "request":
-				cfg.ExpectedRequest = &PayloadSpec{File: *clause.Value}
+				spec.ExpectedRequest = &PayloadSpec{File: *clause.Value}
+				hasRequest = true
 			case "respond":
 				code := 200
 				if cfg.DefaultResponse != nil {
 					code = cfg.DefaultResponse.Code
 				}
-				cfg.DefaultResponse = &DefaultResponse{File: *clause.Value, Code: code}
+				spec.Response = &DefaultResponse{File: *clause.Value, Code: code}
+			}
+		}
+
+		if hasRequest {
+			// If this is the first Expect for this API and an ExpectedRequest
+			// was already set from a previous pass (or JSON config), migrate
+			// it into OrderedExpectations first.
+			if cfg.ExpectedRequest != nil && len(cfg.OrderedExpectations) == 0 {
+				cfg.OrderedExpectations = append(cfg.OrderedExpectations, ExpectationSpec{
+					ExpectedRequest: cfg.ExpectedRequest,
+					Response:        cfg.DefaultResponse,
+				})
+				cfg.ExpectedRequest = nil
+			}
+			cfg.OrderedExpectations = append(cfg.OrderedExpectations, spec)
+		} else if spec.Response != nil {
+			// Expect with no Request: clause but a Respond: clause -- just update the response.
+			cfg.DefaultResponse = spec.Response
+		}
+
+		// Resolve payloads for all ordered expectation specs.
+		for i := range cfg.OrderedExpectations {
+			s := &cfg.OrderedExpectations[i]
+			if s.ExpectedRequest != nil && s.ExpectedRequest.File != "" {
+				b, err := resolveFile(s.ExpectedRequest.File, testPath, suitePath)
+				if err != nil {
+					return fmt.Errorf("API %s expectation %d request: %w", apiName, i, err)
+				}
+				s.ExpectedRequest.Payload = b
+			}
+			if s.Response != nil && s.Response.File != "" {
+				b, err := resolveFile(s.Response.File, testPath, suitePath)
+				if err != nil {
+					return fmt.Errorf("API %s expectation %d response: %w", apiName, i, err)
+				}
+				s.Response.Payload = b
+			}
+		}
+
+		// For single-expectation backward compat, also set ExpectedRequest/DefaultResponse.
+		if len(cfg.OrderedExpectations) == 1 {
+			cfg.ExpectedRequest = cfg.OrderedExpectations[0].ExpectedRequest
+			if cfg.OrderedExpectations[0].Response != nil {
+				cfg.DefaultResponse = cfg.OrderedExpectations[0].Response
 			}
 		}
 
