@@ -8,6 +8,8 @@ import (
 
 	"dojo/internal/workspace"
 	"dojo/pkg/dojo"
+
+	"github.com/jackc/pgproto3/v2"
 )
 
 // resolvePostgresAPI returns the first Postgres API name (sorted) from the suite.
@@ -144,9 +146,10 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) doj
 		}
 
 		hasExpResp := apiConfig.ExpectedResponse != nil && len(apiConfig.ExpectedResponse.Payload) > 0
-		deferToHTTPResponse := protocol == "http" && apiConfig.Mode == "live" &&
-			(hasExpResp || exp.RequiresEval)
-		if result.Err != nil || !deferToHTTPResponse {
+		deferToResponse := (protocol == "http" && apiConfig.Mode == "live" &&
+			(hasExpResp || exp.RequiresEval)) ||
+			(protocol == "postgres" && apiConfig.Mode == "live")
+		if result.Err != nil || !deferToResponse {
 			activeTest.MarkFulfilled(apiName, matchedIdx, result.Err)
 		}
 
@@ -195,10 +198,23 @@ func (e *Engine) ProcessResponse(protocol, matchedID, apiName string, reqPayload
 					apiConfig = testAPI
 				}
 				unfulfilled := activeTest.FirstUnfulfilled(pgName)
-				idx := 0
-				if unfulfilled != nil {
-					idx = unfulfilled.Index
+				if unfulfilled == nil {
+					continue
 				}
+				idx := unfulfilled.Index
+
+				// Verify the response's query matches the unfulfilled expectation
+				// to prevent stale responses from fulfilling the wrong ordered expectation.
+				eff := effectiveAPIConfig(suite, activeTest, pgName)
+				if len(eff.OrderedExpectations) > idx {
+					spec := eff.OrderedExpectations[idx]
+					if spec.ExpectedRequest != nil && len(spec.ExpectedRequest.Payload) > 0 {
+						if !payloadsMatch(eff, reqPayload, spec.ExpectedRequest.Payload) {
+							continue
+						}
+					}
+				}
+
 				if apiConfig.ExpectedResponse != nil && len(apiConfig.ExpectedResponse.Payload) > 0 {
 					expectedStr := string(apiConfig.ExpectedResponse.Payload)
 					actualStr := string(respPayload)
@@ -207,7 +223,15 @@ func (e *Engine) ProcessResponse(protocol, matchedID, apiName string, reqPayload
 						e.evalAndMark(activeTest, pgName, idx, respPayload)
 					}
 				} else {
-					e.evalAndMark(activeTest, pgName, idx, respPayload)
+					complete, errMsg := pgResponseCheck(respPayload)
+					if !complete {
+						continue
+					}
+					if errMsg != "" {
+						activeTest.MarkFulfilled(pgName, idx, fmt.Errorf("postgres query failed: %s", errMsg))
+					} else {
+						e.evalAndMark(activeTest, pgName, idx, respPayload)
+					}
 				}
 			}
 		}
@@ -255,6 +279,28 @@ func (e *Engine) evalAndMark(activeTest *ActiveTest, apiName string, idx int, pa
 		}
 	}
 	activeTest.MarkFulfilled(apiName, idx, checkErr)
+}
+
+// pgResponseCheck parses raw pgproto3 backend response bytes and returns
+// whether the query completed and any error message from Postgres.
+//   - ErrorResponse found: (true, errorMessage)
+//   - ReadyForQuery found: (true, "")   — success
+//   - Neither yet:         (false, "")   — incomplete, caller should wait
+func pgResponseCheck(data []byte) (complete bool, errMsg string) {
+	r := bytes.NewReader(data)
+	frontend := pgproto3.NewFrontend(pgproto3.NewChunkReader(r), nil)
+	for {
+		msg, err := frontend.Receive()
+		if err != nil {
+			return false, ""
+		}
+		switch m := msg.(type) {
+		case *pgproto3.ErrorResponse:
+			return true, m.Message
+		case *pgproto3.ReadyForQuery:
+			return true, ""
+		}
+	}
 }
 
 func httpPayloadContains(actual, expected []byte) bool {

@@ -17,6 +17,8 @@ import (
 	"dojo/internal/engine"
 	"dojo/internal/testutil"
 	"dojo/internal/workspace"
+
+	"github.com/jackc/pgproto3/v2"
 )
 
 func TestEngineExecution(t *testing.T) {
@@ -669,7 +671,11 @@ func TestProcessResponse_PostgresNoExpectedResponse(t *testing.T) {
 	t.Parallel()
 	suite := &workspace.Suite{
 		APIs: map[string]workspace.APIConfig{
-			"pgdb": {Protocol: "postgres", Mode: "live", URL: "postgres://host/db"},
+			"pgdb": {Protocol: "postgres", Mode: "live", URL: "postgres://host/db",
+				OrderedExpectations: []workspace.ExpectationSpec{{
+					ExpectedRequest: &workspace.PayloadSpec{Payload: []byte("INSERT INTO t")},
+				}},
+			},
 		},
 	}
 	active := &engine.ActiveTest{
@@ -684,10 +690,80 @@ func TestProcessResponse_PostgresNoExpectedResponse(t *testing.T) {
 	eng.ActiveSuite = suite
 	eng.Registry.Register("t1", active)
 
-	// No expected_response → fulfills immediately on any response
-	eng.ProcessResponse("postgres", "t1", "", nil, []byte("anything"))
+	rfq, _ := (&pgproto3.ReadyForQuery{TxStatus: 'I'}).Encode(nil)
+	eng.ProcessResponse("postgres", "t1", "", []byte("INSERT INTO t VALUES (1)"), rfq)
 	if !active.Expectations["pgdb"][0].Fulfilled {
 		t.Error("expected pgdb expectation fulfilled (no expected_response)")
+	}
+}
+
+func TestProcessRequest_PostgresLiveDefersFullfillment(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"pgdb": {Protocol: "postgres", Mode: "live", URL: "postgres://host/db",
+				ExpectedRequest: &workspace.PayloadSpec{Payload: []byte("INSERT INTO t")},
+				OrderedExpectations: []workspace.ExpectationSpec{{
+					ExpectedRequest: &workspace.PayloadSpec{Payload: []byte("INSERT INTO t")},
+				}},
+			},
+		},
+	}
+	active := &engine.ActiveTest{
+		ID:    "t1",
+		Suite: suite,
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Expectations: map[string][]*engine.Expectation{
+			"pgdb": {{Target: "pgdb"}},
+		},
+	}
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("t1", active)
+
+	m := eng.ProcessRequest("postgres", "", []byte("INSERT INTO t VALUES (1)"))
+	if m.Err != nil {
+		t.Fatalf("unexpected error: %v", m.Err)
+	}
+	if m.MatchedID != "t1" {
+		t.Fatalf("expected MatchedID=t1, got %q", m.MatchedID)
+	}
+	if active.Expectations["pgdb"][0].Fulfilled {
+		t.Error("live postgres should defer fulfillment to ProcessResponse")
+	}
+}
+
+func TestProcessResponse_PostgresErrorResponse(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"pgdb": {Protocol: "postgres", Mode: "live", URL: "postgres://host/db",
+				OrderedExpectations: []workspace.ExpectationSpec{{
+					ExpectedRequest: &workspace.PayloadSpec{Payload: []byte("INSERT INTO t")},
+				}},
+			},
+		},
+	}
+	active := &engine.ActiveTest{
+		ID:   "t1",
+		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Suite: suite,
+		Expectations: map[string][]*engine.Expectation{
+			"pgdb": {{Target: "pgdb"}},
+		},
+	}
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("t1", active)
+
+	er := &pgproto3.ErrorResponse{Message: "table does not exist"}
+	data, _ := er.Encode(nil)
+	eng.ProcessResponse("postgres", "t1", "", []byte("INSERT INTO t VALUES (1)"), data)
+	if !active.Expectations["pgdb"][0].Fulfilled {
+		t.Error("expected fulfilled (with error) after ErrorResponse")
+	}
+	if active.Expectations["pgdb"][0].Error == nil {
+		t.Error("expected non-nil error for ErrorResponse")
 	}
 }
 

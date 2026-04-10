@@ -191,14 +191,16 @@ Syntax: `Action -> Target -> Clause: value -> Clause: value`
 
 | Action | Purpose |
 |--------|---------|
-| `Perform` | Trigger the SUT. Target is an entrypoint path (e.g. `entrypoints/webhook`). |
+| `Perform` | Trigger the SUT or execute a DB assertion. Target is an entrypoint path (e.g. `entrypoints/webhook`) or `postgres` for direct DB queries. |
 | `Expect` | Declare an expected outbound call. Target is an API name (e.g. `postgres`, `gemini`). |
 
 ### Clauses
 
 | Clause | Used with | Description |
 |--------|-----------|-------------|
-| `Payload:` | Perform | Fixture file sent as the trigger body. |
+| `Payload:` | Perform (entrypoint) | Fixture file sent as the trigger body. |
+| `Query:` | Perform (postgres) | SQL fixture file to execute against the live database. |
+| `Expect:` | Perform (postgres) | Assertion on query result: `"N"` for row count, `file.json` for JSON comparison, or omit for OK-only. |
 | `Request:` | Expect | Fixture file containing the expected outbound payload. |
 | `Respond:` | Expect | Fixture file returned as the mock response body. |
 | `Evaluate Response` | Expect | No value. Triggers AI evaluation using `eval.md`. |
@@ -257,6 +259,73 @@ Expect -> gemini -> Request: gemini_request.json -> Evaluate Response
 
 Requires `evaluator` in `dojo.config` and an `eval.md` file in the test (or
 suite) directory containing grading rules in Markdown.
+
+### Postgres wire protocol verification
+
+`Expect -> postgres` on a live Postgres proxy doesn't just verify the query was
+sent -- Dojo parses the pgproto3 wire protocol response to confirm the query
+succeeded. An `ErrorResponse` from Postgres fails the expectation automatically.
+
+### Phased execution and `Perform -> postgres`
+
+A plan can contain multiple `Perform` lines. Each `Perform` starts a new
+**phase**. All `Expect` lines between two Performs belong to the preceding
+phase. The next `Perform` fires only after the previous phase's expectations are
+fulfilled.
+
+Use `Perform -> postgres` to query the live database directly after the SUT
+finishes and assert on the result:
+
+**Mode 1 -- OK (no Expect):** Query must execute without errors.
+```text
+Perform -> postgres -> Query: check.sql
+```
+
+**Mode 2 -- Row count:** Query must return exactly N rows.
+```text
+Perform -> postgres -> Query: check.sql -> Expect: "1"
+```
+
+**Mode 3 -- JSON comparison:** Result rows compared via subset matching.
+```text
+Perform -> postgres -> Query: check.sql -> Expect: expected.json
+```
+
+### Example: DB state assertion after insert
+
+```text
+Perform -> entrypoints/webhook -> Payload: incoming.json
+
+Expect -> gemini -> Request: intent_request.json -> Respond: intent_response.json
+Expect -> gemini -> Request: conv_request.json -> Respond: conv_response.json
+Expect -> postgres -> Request: postgres_request.sql
+
+Perform -> postgres -> Query: check_insert.sql -> Expect: "1"
+```
+
+The second `Perform` runs only after all three `Expect` lines are fulfilled.
+`check_insert.sql` queries the database and the test asserts exactly 1 row
+exists.
+
+### Runnable example (example suite)
+
+The repo ships `example/tests/blackbox/test_perform_postgres/` which chains all
+four `Perform -> postgres` modes in **one plan**:
+
+```text
+Perform -> entrypoints/webhook -> Payload: incoming.json
+
+Expect -> postgres -> Request: postgres_request.sql
+Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.json
+Expect -> whatsapp -> Request: whatsapp_request.json
+
+Perform -> postgres -> Query: check_row.sql -> Expect: "1"
+Perform -> postgres -> Query: check_display.sql -> Expect: expected.json
+Perform -> postgres -> Query: ping.sql
+Perform -> postgres -> Query: check_gone.sql -> Expect: "0"
+```
+
+Run: `go run cmd/dojo/main.go ./example/tests/blackbox`
 
 ## Fixture Files
 

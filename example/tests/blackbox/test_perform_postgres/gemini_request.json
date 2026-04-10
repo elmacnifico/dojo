@@ -1,0 +1,19 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Register me (Perform -> postgres example)"
+        }
+      ]
+    }
+  ],
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "You are a routing assistant. Resolve queries for user usr_pg."
+      }
+    ]
+  }
+}

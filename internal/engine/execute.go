@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"dojo/internal/workspace"
@@ -26,6 +28,30 @@ type MismatchError struct {
 }
 
 func (e *MismatchError) Error() string { return e.Reason }
+
+// planPhase groups a Perform line with the Expect lines that follow it.
+type planPhase struct {
+	perform workspace.ParsedLine
+	expects []workspace.ParsedLine
+}
+
+// splitPhases divides plan lines into phases, each starting with a Perform.
+func splitPhases(lines []workspace.ParsedLine) []planPhase {
+	var phases []planPhase
+	cur := -1
+	for _, l := range lines {
+		switch strings.ToLower(l.Action) {
+		case "perform":
+			phases = append(phases, planPhase{perform: l})
+			cur++
+		case "expect":
+			if cur >= 0 {
+				phases[cur].expects = append(phases[cur].expects, l)
+			}
+		}
+	}
+	return phases
+}
 
 func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Test, suite *workspace.Suite, suiteName string) error {
 	livePostgres := false
@@ -54,7 +80,14 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 		return fmt.Errorf("plan must start with a Perform action")
 	}
 
-	performLine := doc.Lines[0]
+	phases := splitPhases(doc.Lines)
+	if len(phases) == 0 {
+		return fmt.Errorf("plan must start with a Perform action")
+	}
+
+	// Phase 1: entrypoint trigger + observer expectations.
+	firstPhase := phases[0]
+	performLine := firstPhase.perform
 	epName := strings.TrimPrefix(performLine.Target, "entrypoints/")
 	ep, ok := suite.Entrypoints[epName]
 	if !ok {
@@ -90,24 +123,21 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 		done:         make(chan struct{}),
 	}
 
-	expIdx := make(map[string]int) // tracks next index per API
-	for _, l := range doc.Lines {
-		if strings.ToLower(l.Action) == "expect" {
-			apiName := l.Target
-			idx := expIdx[apiName]
-			exp := &Expectation{
-				Target: apiName,
-				Index:  idx,
-			}
-
-			for _, clause := range l.Clauses {
-				if strings.ToLower(clause.Key) == "evaluate response" {
-					exp.RequiresEval = true
-				}
-			}
-			active.Expectations[apiName] = append(active.Expectations[apiName], exp)
-			expIdx[apiName] = idx + 1
+	expIdx := make(map[string]int)
+	for _, l := range firstPhase.expects {
+		apiName := l.Target
+		idx := expIdx[apiName]
+		exp := &Expectation{
+			Target: apiName,
+			Index:  idx,
 		}
+		for _, clause := range l.Clauses {
+			if strings.ToLower(clause.Key) == "evaluate response" {
+				exp.RequiresEval = true
+			}
+		}
+		active.Expectations[apiName] = append(active.Expectations[apiName], exp)
+		expIdx[apiName] = idx + 1
 	}
 
 	if len(active.Expectations) == 0 {
@@ -163,6 +193,7 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 		return fmt.Errorf("unsupported entrypoint type %q for %q; only \"http\" is currently supported", ep.Type, epName)
 	}
 
+	// Wait for phase 1 expectations.
 	select {
 	case <-active.done:
 	case <-e.sutDeadCh:
@@ -194,7 +225,136 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 		}
 	}
 
+	// Subsequent phases: inline assertions (e.g. Perform -> postgres).
+	testDir := filepath.Join(e.Workspace.BaseDir, suiteName, id)
+	suiteDir := filepath.Join(e.Workspace.BaseDir, suiteName)
+	for _, ph := range phases[1:] {
+		if err := e.executePostgresPerform(ctx, ph.perform, testDir, suiteDir, livePGURL); err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+// executePostgresPerform runs a SQL query against the live Postgres and asserts
+// on the result. Three modes based on the Expect clause:
+//   - No Expect:       query must not error (OK)
+//   - Expect: "N":     query must return exactly N rows
+//   - Expect: file.json: result rows compared via JSONSubsetMatch
+func (e *Engine) executePostgresPerform(ctx context.Context, line workspace.ParsedLine, testDir, suiteDir, pgURL string) error {
+	var queryFile, expectValue string
+	for _, c := range line.Clauses {
+		if c.Value == nil {
+			continue
+		}
+		switch strings.ToLower(c.Key) {
+		case "query":
+			queryFile = *c.Value
+		case "expect":
+			expectValue = *c.Value
+		}
+	}
+
+	if queryFile == "" {
+		return fmt.Errorf("Perform -> postgres requires a Query clause")
+	}
+
+	querySQL, err := readFixture(testDir, suiteDir, queryFile)
+	if err != nil {
+		return fmt.Errorf("failed to read query fixture %s: %w", queryFile, err)
+	}
+
+	db, err := sql.Open("postgres", pgURL)
+	if err != nil {
+		return fmt.Errorf("postgres connect failed: %w", err)
+	}
+	defer db.Close()
+
+	rows, err := db.QueryContext(ctx, string(querySQL))
+	if err != nil {
+		return fmt.Errorf("postgres query failed: %w", err)
+	}
+	defer rows.Close()
+
+	if expectValue == "" {
+		return nil
+	}
+
+	if filepath.Ext(expectValue) != "" {
+		actual := rowsToJSON(rows)
+		expected, err := readFixture(testDir, suiteDir, expectValue)
+		if err != nil {
+			return fmt.Errorf("failed to read expect fixture %s: %w", expectValue, err)
+		}
+		if !workspace.JSONSubsetMatch(actual, expected) {
+			exp := truncate(string(expected), 500)
+			act := truncate(string(actual), 500)
+			return &MismatchError{
+				Reason:   fmt.Sprintf("postgres result mismatch\n  expected: %s\n  actual:   %s", exp, act),
+				Expected: exp,
+				Actual:   act,
+			}
+		}
+		return nil
+	}
+
+	expectedCount, err := strconv.Atoi(expectValue)
+	if err != nil {
+		return fmt.Errorf("invalid Expect value %q: must be a number or a .json file path", expectValue)
+	}
+	actualCount := 0
+	for rows.Next() {
+		actualCount++
+	}
+	if actualCount != expectedCount {
+		return &MismatchError{
+			Reason:   fmt.Sprintf("expected %d rows, got %d", expectedCount, actualCount),
+			Expected: strconv.Itoa(expectedCount),
+			Actual:   strconv.Itoa(actualCount),
+		}
+	}
+	return nil
+}
+
+// readFixture reads a file, trying testDir first then falling back to suiteDir.
+func readFixture(testDir, suiteDir, filename string) ([]byte, error) {
+	p := filepath.Join(testDir, filename)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		p = filepath.Join(suiteDir, filename)
+		b, err = os.ReadFile(p)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return b, nil
+}
+
+// rowsToJSON serializes SQL result rows as a JSON array of string-valued objects.
+func rowsToJSON(rows *sql.Rows) []byte {
+	cols, _ := rows.Columns()
+	var results []map[string]string
+	for rows.Next() {
+		vals := make([]sql.NullString, len(cols))
+		ptrs := make([]interface{}, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		rows.Scan(ptrs...)
+		row := make(map[string]string, len(cols))
+		for i, col := range cols {
+			if vals[i].Valid {
+				row[col] = vals[i].String
+			}
+		}
+		results = append(results, row)
+	}
+	if results == nil {
+		results = []map[string]string{}
+	}
+	b, _ := json.Marshal(results)
+	return b
 }
 
 func (e *Engine) checkSeedRequiresLiveDB(seedDir string, hasLiveDB bool) error {

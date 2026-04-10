@@ -292,13 +292,11 @@ func (p *PostgresProxy) acceptLoop() {
 					mr = p.matchTable.ProcessRequest("postgres", "", []byte(m.String))
 				}
 
-				if mr.MatchedID != "" {
-					p.mu.Lock()
-					if pc, ok := p.conns[clientConn]; ok {
-						pc.id = mr.MatchedID
-					}
-					p.mu.Unlock()
+				p.mu.Lock()
+				if pc, ok := p.conns[clientConn]; ok {
+					pc.id = mr.MatchedID
 				}
+				p.mu.Unlock()
 				if mr.IsMock {
 					if !writeMsg(&pgproto3.CommandComplete{CommandTag: []byte("INSERT 0 1")}) {
 						return
@@ -314,13 +312,11 @@ func (p *PostgresProxy) acceptLoop() {
 					mr = p.matchTable.ProcessRequest("postgres", "", []byte(m.Query))
 				}
 
-				if mr.MatchedID != "" {
-					p.mu.Lock()
-					if pc, ok := p.conns[clientConn]; ok {
-						pc.id = mr.MatchedID
-					}
-					p.mu.Unlock()
+				p.mu.Lock()
+				if pc, ok := p.conns[clientConn]; ok {
+					pc.id = mr.MatchedID
 				}
+				p.mu.Unlock()
 				if mr.IsMock {
 					if !writeMsg(&pgproto3.ParseComplete{}) {
 						return

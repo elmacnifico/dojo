@@ -232,6 +232,14 @@ tests/blackbox/
     seed/
       seed.sql
 
+  test_perform_postgres/                  # Phased plan: all 4 Perform -> postgres modes in one test
+    perform_postgres.plan
+    check_row.sql                        # Expect: "1" (row-count assertion)
+    check_display.sql                    # Expect: expected.json (JSON subset match)
+    expected.json
+    ping.sql                             # No Expect (OK-only: query must not error)
+    check_gone.sql                       # Expect: "0" (zero-row assertion)
+
   test_image_upload/
     image_upload.plan
     image.jpg                            # Binary payload sent to the SUT
@@ -251,6 +259,10 @@ Key observations:
   (test-specific data).
 * `test_image_upload` demonstrates binary fixture payloads -- the `.plan` uses
   `Payload: image.jpg` and Dojo sends the raw JPEG bytes to the SUT.
+* The `test_perform_postgres` test demonstrates **phased plans** and all four
+  **`Perform -> postgres`** modes in a single plan: row count (`Expect: "1"`),
+  JSON subset (`Expect: expected.json`), OK-only (no `Expect:`), and zero rows
+  (`Expect: "0"`).
 
 ---
 
@@ -301,6 +313,68 @@ Expect -> whatsapp -> Request: whatsapp_request.json
 The structure is identical. Only the fixture contents differ -- different
 `incoming.json`, different `gemini_request.json` overlay, different SQL in
 `postgres_request.sql`. The `.plan` stays clean.
+
+### Postgres Wire Protocol Verification
+
+When `Expect -> postgres` matches a query through a live Postgres proxy, Dojo
+doesn't just verify the query was *sent* -- it waits for the database response
+and parses the pgproto3 wire protocol to confirm the query *succeeded*. If
+Postgres returns an `ErrorResponse`, the expectation is marked as failed with
+the error message.
+
+### Phased Execution and `Perform -> postgres`
+
+A plan can have multiple `Perform` lines. Each `Perform` starts a new
+**phase**. All `Expect` lines between two Performs belong to the preceding
+phase. The next `Perform` fires only after its phase's expectations are all
+fulfilled.
+
+This enables **database state assertions**: after the SUT finishes its work,
+fire a `Perform -> postgres` to query the database directly and check the
+result.
+
+#### Three assertion modes
+
+**Mode 1 -- OK (no Expect clause):** Query must not error.
+
+```text
+Perform -> postgres -> Query: check.sql
+```
+
+**Mode 2 -- Row count:** Query must return exactly N rows.
+
+```text
+Perform -> postgres -> Query: check.sql -> Expect: "1"
+```
+
+**Mode 3 -- JSON comparison:** Result rows compared via subset matching.
+
+```text
+Perform -> postgres -> Query: check.sql -> Expect: expected.json
+```
+
+#### Full example: nutrition insert with DB verification
+
+```text
+Perform -> entrypoints/webhook -> Payload: incoming.json
+
+Expect -> gemini -> Request: intent_gemini_request.json -> Respond: intent_gemini_response.json
+Expect -> gemini -> Request: conv_gemini_request.json -> Respond: conv_gemini_response.json
+Expect -> postgres -> Request: postgres_request.sql
+
+Perform -> postgres -> Query: check_insert.sql -> Expect: "1"
+```
+
+Where `check_insert.sql` contains:
+```sql
+SELECT 1 FROM nutrition_logs WHERE title = 'Chicken Breast'
+```
+
+The first `Perform` triggers the SUT. Dojo waits for all three `Expect` lines
+to be fulfilled (including wire protocol success verification on the Postgres
+query). Only then does it fire the second `Perform`, which runs
+`check_insert.sql` against the live database and asserts exactly 1 row was
+returned.
 
 ---
 
