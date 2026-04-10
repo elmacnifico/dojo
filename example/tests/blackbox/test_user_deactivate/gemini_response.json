@@ -11,11 +11,5 @@
       },
       "finishReason": "STOP"
     }
-  ],
-  "usageMetadata": {
-    "promptTokenCount": 140,
-    "candidatesTokenCount": 72,
-    "totalTokenCount": 212
-  },
-  "modelVersion": "gemini-2.5-flash-001"
+  ]
 }

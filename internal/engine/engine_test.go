@@ -1342,3 +1342,140 @@ func TestMismatchErrorPopulatesStructuredFields(t *testing.T) {
 		t.Error("TestResult.Expected/Actual should be populated for mismatches")
 	}
 }
+
+func TestEnvVarExpansionInMockResponse(t *testing.T) {
+	t.Parallel()
+
+	var gotBody string
+	sutServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/trigger" {
+			apiURL := os.Getenv("API_MEDIA_URL")
+			if apiURL != "" {
+				client := &http.Client{Timeout: 2 * time.Second}
+				resp, err := client.Get(apiURL + "/lookup")
+				if err == nil {
+					body, _ := io.ReadAll(resp.Body)
+					gotBody = string(body)
+					resp.Body.Close()
+				}
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"ok"}`))
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer sutServer.Close()
+
+	tmpDir := t.TempDir()
+
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+	testutil.CreateFile(t, tmpDir, "suite/apis/media.json", `{
+		"mode": "mock",
+		"default_response": {"code": 200, "body": "{\"url\": \"$API_MEDIA_URL/download/file.jpg\"}"}
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", fmt.Sprintf(`{
+		"type": "http",
+		"path": "/trigger",
+		"url": %q
+	}`, sutServer.URL))
+	testutil.CreateFile(t, tmpDir, "suite/test_expand/test.plan", "Perform -> entrypoints/webhook -> Payload: incoming.json")
+	testutil.CreateFile(t, tmpDir, "suite/test_expand/incoming.json", `{}`)
+
+	ws, err := workspace.LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace: %v", err)
+	}
+
+	eng := engine.NewEngine(ws)
+	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+		t.Fatalf("StartProxies: %v", err)
+	}
+	defer eng.StopProxies()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	summary, err := eng.RunSuite(ctx, "suite", nil)
+	if err != nil {
+		t.Fatalf("RunSuite: %v", err)
+	}
+	if summary.Failed != 0 {
+		t.Fatalf("want 0 failures, got %d: %v", summary.Failed, summary.Failures)
+	}
+
+	expectedPrefix := "http://" + eng.HTTPProxy.Addr() + "/media"
+	if !strings.Contains(gotBody, expectedPrefix) {
+		t.Errorf("mock response body was not expanded\n  got:  %s\n  want to contain: %s", gotBody, expectedPrefix)
+	}
+}
+
+func TestMockResponseContentType(t *testing.T) {
+	var gotContentType string
+	var mediaURL string
+
+	sutServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/trigger" {
+			if mediaURL != "" {
+				client := &http.Client{Timeout: 2 * time.Second}
+				resp, err := client.Get(mediaURL + "/photo.jpg")
+				if err == nil {
+					gotContentType = resp.Header.Get("Content-Type")
+					io.Copy(io.Discard, resp.Body)
+					resp.Body.Close()
+				}
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"ok"}`))
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer sutServer.Close()
+
+	tmpDir := t.TempDir()
+
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+	testutil.CreateFile(t, tmpDir, "suite/apis/media.json", `{
+		"mode": "mock",
+		"default_response": {
+			"code": 200,
+			"body": "binary-image-data",
+			"content_type": "image/jpeg"
+		}
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", fmt.Sprintf(`{
+		"type": "http",
+		"path": "/trigger",
+		"url": %q
+	}`, sutServer.URL))
+	testutil.CreateFile(t, tmpDir, "suite/test_ct/test.plan", "Perform -> entrypoints/webhook -> Payload: incoming.json")
+	testutil.CreateFile(t, tmpDir, "suite/test_ct/incoming.json", `{}`)
+
+	ws, err := workspace.LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace: %v", err)
+	}
+
+	eng := engine.NewEngine(ws)
+	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+		t.Fatalf("StartProxies: %v", err)
+	}
+	defer eng.StopProxies()
+
+	mediaURL = "http://" + eng.HTTPProxy.Addr() + "/media"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	summary, err := eng.RunSuite(ctx, "suite", nil)
+	if err != nil {
+		t.Fatalf("RunSuite: %v", err)
+	}
+	if summary.Failed != 0 {
+		t.Fatalf("want 0 failures, got %d: %v", summary.Failed, summary.Failures)
+	}
+	if gotContentType != "image/jpeg" {
+		t.Errorf("expected Content-Type image/jpeg, got %q", gotContentType)
+	}
+}

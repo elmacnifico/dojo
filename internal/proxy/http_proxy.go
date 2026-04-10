@@ -88,7 +88,11 @@ func (p *HTTPProxy) Start(ctx context.Context, listenAddr string, matchTable doj
 		}
 
 		if m.IsMock {
-			w.Header().Set("Content-Type", "application/json")
+			ct := m.MockContentType
+			if ct == "" {
+				ct = "application/json"
+			}
+			w.Header().Set("Content-Type", ct)
 			if m.MockCode == 0 {
 				m.MockCode = 200
 			}

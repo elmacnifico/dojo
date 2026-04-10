@@ -67,6 +67,56 @@ func TestPgResponseCheck_CommandCompleteThenReadyForQuery(t *testing.T) {
 	}
 }
 
+func TestProcessRequest_TestLevelOverrideWithoutExpect(t *testing.T) {
+	t.Parallel()
+	eng := &Engine{
+		Registry: NewRegistry(),
+	}
+	eng.ActiveSuite = &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"download": {
+				Mode: "mock",
+				DefaultResponse: &workspace.DefaultResponse{
+					Code:    200,
+					Payload: []byte(`suite-level`),
+				},
+			},
+		},
+	}
+	at := &ActiveTest{
+		ID: "t1",
+		Test: &workspace.Test{
+			APIs: map[string]workspace.APIConfig{
+				"download": {
+					Mode: "mock",
+					DefaultResponse: &workspace.DefaultResponse{
+						Code:        200,
+						ContentType: "image/jpeg",
+						Payload:     []byte(`test-level-binary`),
+					},
+				},
+			},
+		},
+		Expectations: map[string][]*Expectation{},
+		done:         make(chan struct{}),
+	}
+	eng.Registry.Register("t1", at)
+
+	result := eng.ProcessRequest("http", "download", []byte(`anything`))
+	if result.Err != nil {
+		t.Fatalf("unexpected error: %v", result.Err)
+	}
+	if !result.IsMock {
+		t.Fatal("expected IsMock=true")
+	}
+	if result.MockContentType != "image/jpeg" {
+		t.Fatalf("expected content type image/jpeg, got %q", result.MockContentType)
+	}
+	if string(result.MockResponse) != "test-level-binary" {
+		t.Fatalf("expected test-level-binary response, got %q", string(result.MockResponse))
+	}
+}
+
 func TestSplitPhases_SinglePhase(t *testing.T) {
 	t.Parallel()
 	lines := []workspace.ParsedLine{

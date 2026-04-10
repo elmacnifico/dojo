@@ -151,21 +151,83 @@ matching.
 | `mode` | `mock` / `live` | Mock intercepts and replies; live proxies through. |
 | `url` | URL path or full URL | Path for mock HTTP (e.g. `/v1/messages`); full postgres:// URL for live Postgres. |
 | `protocol` | `postgres` | Only needed for Postgres APIs. HTTP is the default. |
-| `default_response` | `{code, body}` | Mock reply when no `Respond:` clause is given. |
+| `default_response` | `{code, body}` | Mock reply when no `Respond:` clause is given. Supports `$VAR` expansion (see below). |
+
+### Env Var Expansion in Mock Responses
+
+`default_response.body` and per-expectation `Respond:` bodies support `$VAR`
+expansion using the process environment. This is useful for referencing other
+API proxy addresses inside a mock response.
+
+```json
+{
+  "mode": "mock",
+  "default_response": {
+    "code": 200,
+    "body": "{\"url\": \"$API_MEDIA_DOWNLOAD_URL/file.jpg\"}"
+  }
+}
+```
+
+At runtime `$API_MEDIA_DOWNLOAD_URL` resolves to the actual proxy address,
+letting you chain mock APIs (one returns a URL, the SUT follows it back through
+another mock).
+
+### Binary File Responses
+
+Mock APIs can serve binary files (images, PDFs, etc.) using `file` and
+`content_type` in `default_response`. The `file` path is resolved relative to
+the directory containing the API config file (test dir first, suite dir
+fallback).
+
+```json
+{
+  "mode": "mock",
+  "default_response": {
+    "code": 200,
+    "file": "photo.jpg",
+    "content_type": "image/jpeg"
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `file` | Path to a binary file. Resolved relative to the API config's directory. |
+| `content_type` | `Content-Type` header for the response (defaults to `application/json`). |
+
+Binary file payloads skip `$VAR` expansion to avoid corrupting binary data.
 
 ### Test-level API override
 
 Place `test_foo/apis/<api-name>.json` with only the fields that differ. Suite
-config is copied first; then the test JSON is merged on top.
+config is copied first; then the test JSON is merged on top. Test-level
+overrides apply even when the plan has no `Expect` clause for that API -- Dojo
+uses the override for mock responses whenever that test is the only active test.
 
+This is the primary mechanism for serving test-specific binary fixtures:
+
+```text
+test_image_analysis/
+  apis/
+    media_download.json          # Overrides the suite-level mock with a binary file
+  test_image.jpg                 # The binary file served by the override
+  image_analysis.plan
+```
+
+`test_image_analysis/apis/media_download.json`:
 ```json
 {
   "default_response": {
     "code": 200,
-    "body": "{\"updated\":true}"
+    "file": "test_image.jpg",
+    "content_type": "image/jpeg"
   }
 }
 ```
+
+The `file` path is resolved relative to the **test directory first**, then the
+suite directory. This keeps test-specific binary fixtures next to their test.
 
 ## Entrypoints: `entrypoints/*.json`
 
@@ -230,6 +292,32 @@ Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.jso
 ```
 
 Non-JSON files are sent as raw bytes.
+
+### Example: binary mock response (test-level API override)
+
+When the SUT fetches a binary resource from an external API, override the mock
+at the test level to serve a real file. The plan does not need an `Expect`
+clause for the mocked API -- the test-level override applies automatically:
+
+```text
+Perform -> entrypoints/media_process -> Payload: incoming.json
+
+Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.json
+```
+
+With `test_media_process/apis/media.json`:
+```json
+{
+  "default_response": {
+    "code": 200,
+    "file": "photo.jpg",
+    "content_type": "image/jpeg"
+  }
+}
+```
+
+And `test_media_process/photo.jpg` alongside it. When the SUT calls the media
+API, Dojo serves `photo.jpg` with the correct content type.
 
 ### Example: ordered multi-expectations
 
@@ -334,6 +422,18 @@ Run: `go run cmd/dojo/main.go ./example/tests/blackbox`
 - `.sql` -- Raw SQL text (Postgres). Matched via whitespace-collapsed equality.
 - Any other extension (`.jpg`, `.png`, `.bin`) -- raw bytes for `Payload:`.
 
+### Fixture placement: what goes where
+
+| Scope | Use for | Location |
+|-------|---------|----------|
+| Suite level | Shared config (deep-merge bases, shared seeds, default API configs) | `my_suite/<file>`, `my_suite/apis/`, `my_suite/seed/` |
+| Test level | Per-test diffs, test-specific payloads, binary fixtures | `test_foo/<file>`, `test_foo/apis/`, `test_foo/seed/` |
+
+**Rule of thumb:** if a fixture is used by only one test, it belongs in the test
+directory. Binary files (images, audio, etc.) always belong at the test level
+since they are inherently test-specific. Suite-level fixtures should only
+contain shared structure that multiple tests deep-merge against.
+
 ### Deep merge (fixture inheritance)
 
 When the same filename exists at suite and test level:
@@ -418,9 +518,10 @@ Dojo will:
 4. For each `Expect -> <api>`:
    - Create the `Request:` fixture (`.json` or `.sql`).
    - If mock: create `Respond:` fixture or rely on `default_response`.
-5. If using deep merge: only put the per-test diff in `test_<name>/`, keep the shared base at suite level.
-6. If the test needs seed data: create `test_<name>/seed/seed.sql`.
-7. If the test needs a different API config: create `test_<name>/apis/<api>.json` with only the overridden fields.
-8. Run: `go run cmd/dojo/main.go ./path/to/suite` and confirm the test passes.
+5. If the SUT calls a mock API that needs a test-specific response (especially binary files): create `test_<name>/apis/<api>.json` with a `file` and `content_type` override. Place the binary file in the test directory.
+6. If using deep merge: only put the per-test diff in `test_<name>/`, keep the shared base at suite level.
+7. If the test needs seed data: create `test_<name>/seed/seed.sql`.
+8. If the test needs a different API config: create `test_<name>/apis/<api>.json` with only the overridden fields.
+9. Run: `go run cmd/dojo/main.go ./path/to/suite` and confirm the test passes.
 
 For deeper details, see [readme.md](readme.md).

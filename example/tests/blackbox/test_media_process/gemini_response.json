@@ -2,7 +2,7 @@
   "candidates": [
     {
       "content": {
-        "parts": [{ "text": "{\"description\":\"A small red square image.\"}" }],
+        "parts": [{ "text": "{\"description\":\"A minimal 1x1 test JPEG.\"}" }],
         "role": "model"
       },
       "finishReason": "STOP"

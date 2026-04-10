@@ -140,6 +140,17 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) error {
 		}
 	}
 
+	// Publish API_*_URL env vars so mock response bodies can use $API_*_URL.
+	for apiName, apiConfig := range suite.APIs {
+		var val string
+		if apiConfig.Protocol == "postgres" || strings.HasPrefix(apiConfig.URL, "postgres://") {
+			val = fmt.Sprintf("postgres://postgres:postgres@%s/postgres?sslmode=disable", e.PostgresProxy.Addr())
+		} else {
+			val = fmt.Sprintf("http://%s/%s", e.HTTPProxy.Addr(), apiName)
+		}
+		os.Setenv(fmt.Sprintf("API_%s_URL", strings.ToUpper(apiName)), val)
+	}
+
 	if suite.Config.SutCommand != "" {
 		sutCtx, cancel := context.WithCancel(ctx)
 		e.sutCancel = cancel
@@ -150,13 +161,6 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) error {
 		runner.ShutdownGrace = suite.Config.Timeouts.SUTShutdown.Duration
 		runner.Verbose = e.verbose
 		env := os.Environ()
-		for apiName, apiConfig := range suite.APIs {
-			if apiConfig.Protocol == "postgres" || strings.HasPrefix(apiConfig.URL, "postgres://") {
-				env = append(env, fmt.Sprintf("API_%s_URL=postgres://postgres:postgres@%s/postgres?sslmode=disable", strings.ToUpper(apiName), e.PostgresProxy.Addr()))
-			} else {
-				env = append(env, fmt.Sprintf("API_%s_URL=http://%s/%s", strings.ToUpper(apiName), e.HTTPProxy.Addr(), apiName))
-			}
-		}
 		runner.Env = env
 		e.sutDoneCh = make(chan struct{})
 

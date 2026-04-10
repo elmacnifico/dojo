@@ -1,6 +1,9 @@
 package workspace_test
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -233,5 +236,58 @@ func payloadStr2(dr *workspace.DefaultResponse) string {
 		return "<nil>"
 	}
 	return string(dr.Payload)
+}
+
+func TestLoadWorkspace_TestLevelAPIFileResolution(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+	testutil.CreateFile(t, tmpDir, "suite/apis/media.json", `{
+		"mode": "mock",
+		"default_response": {"code": 200, "body": "suite-level-fallback"}
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", `{
+		"type": "http",
+		"path": "/trigger"
+	}`)
+
+	// Test overrides the media API with a file reference.
+	binaryPayload := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10}
+	imgPath := filepath.Join(tmpDir, "suite", "test_img", "photo.jpg")
+	if err := os.MkdirAll(filepath.Dir(imgPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(imgPath, binaryPayload, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.CreateFile(t, tmpDir, "suite/test_img/apis/media.json", `{
+		"default_response": {
+			"code": 200,
+			"file": "photo.jpg",
+			"content_type": "image/jpeg"
+		}
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_img/test.plan", "Perform -> entrypoints/webhook")
+
+	ws, err := workspace.LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace: %v", err)
+	}
+
+	suite := ws.Suites["suite"]
+	test := suite.Tests["test_img"]
+	mediaCfg, ok := test.APIs["media"]
+	if !ok {
+		t.Fatal("expected media API in test")
+	}
+
+	if !bytes.Equal(mediaCfg.DefaultResponse.Payload, binaryPayload) {
+		t.Errorf("test-level file not resolved\n  got:  %v\n  want: %v", mediaCfg.DefaultResponse.Payload, binaryPayload)
+	}
+	if mediaCfg.DefaultResponse.ContentType != "image/jpeg" {
+		t.Errorf("content_type not preserved: got %q", mediaCfg.DefaultResponse.ContentType)
+	}
 }
 

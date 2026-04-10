@@ -5,13 +5,14 @@ import "context"
 
 // MatchResult holds the outcome of a [MatchTable.ProcessRequest] call.
 type MatchResult struct {
-	MatchedID    string
-	IsMock       bool
-	MockCode     int
-	MockResponse []byte
-	DestURL      string
-	Headers      map[string]string
-	Err          error
+	MatchedID       string
+	IsMock          bool
+	MockCode        int
+	MockResponse    []byte
+	MockContentType string
+	DestURL         string
+	Headers         map[string]string
+	Err             error
 }
 
 // MatchTable is used by the Observer to intercept and match SUT traffic against expectations.

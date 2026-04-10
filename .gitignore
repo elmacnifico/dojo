@@ -30,4 +30,4 @@ Icon
 vendor/
 
 # Environment variable files with secrets
-.env.local
+.env.localsut

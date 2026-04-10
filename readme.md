@@ -184,9 +184,11 @@ tests/blackbox/
     gemini.json                          # mode: mock, URL path
     postgres.json                        # mode: live, connection string
     whatsapp.json                        # mode: mock, inline default_response
+    media.json                           # mode: mock, generic default (overridden per-test)
   entrypoints/
     webhook.json                         # How Dojo triggers the SUT (JSON payload)
     upload.json                          # How Dojo triggers the SUT (binary payload)
+    media_process.json                   # How Dojo triggers the SUT (media processing)
   seed/
     schema.sql                           # Shared DDL, run before all tests
   gemini_request.json                    # Suite-level fixture (deep-merge base)
@@ -245,6 +247,15 @@ tests/blackbox/
     image.jpg                            # Binary payload sent to the SUT
     gemini_request.json
     gemini_response.json
+
+  test_media_process/
+    media_process.plan
+    incoming.json                        # {"media_id": "img-001"}
+    photo.jpg                            # Binary file served by test-level mock
+    gemini_request.json
+    gemini_response.json
+    apis/
+      media.json                         # Overrides suite mock: file + content_type
 ```
 
 Key observations:
@@ -259,6 +270,11 @@ Key observations:
   (test-specific data).
 * `test_image_upload` demonstrates binary fixture payloads -- the `.plan` uses
   `Payload: image.jpg` and Dojo sends the raw JPEG bytes to the SUT.
+* `test_media_process` demonstrates **binary mock responses** -- the test-level
+  `apis/media.json` overrides the suite mock to serve `photo.jpg` with
+  `content_type: "image/jpeg"`. The binary file lives in the test directory next
+  to the API override that references it. No `Expect` clause is needed for the
+  media API.
 * The `test_perform_postgres` test demonstrates **phased plans** and all four
   **`Perform -> postgres`** modes in a single plan: row count (`Expect: "1"`),
   JSON subset (`Expect: expected.json`), OK-only (no `Expect:`), and zero rows
@@ -436,9 +452,10 @@ rather than replacing it.
 
 Here is a concrete end-to-end flow for one test in the example suite:
 
-1. **Boot:** Dojo reads `dojo.config`, discovers 5 tests (`test_user_register`,
+1. **Boot:** Dojo reads `dojo.config`, discovers 7 tests (`test_user_register`,
    `test_user_lookup`, `test_user_update`, `test_user_deactivate`,
-   `test_image_upload`), and loads suite-level API configs from `apis/`.
+   `test_image_upload`, `test_media_process`, `test_perform_postgres`), and
+   loads suite-level API configs from `apis/`.
 
 2. **Fixture resolution:** For `test_user_deactivate`, Dojo finds
    `gemini_request.json` at both suite and test level. It deep-merges them:
@@ -538,3 +555,65 @@ Example `.env.local`:
 ```
 GEMINI_API_KEY=your-actual-key
 ```
+
+### Env Var Expansion in Mock Responses
+
+Mock response bodies support `$VAR` expansion using the process environment.
+This is most useful for referencing other API proxy URLs inside a response.
+
+For example, a media-lookup API whose response points back to a download API:
+
+```json
+{
+  "mode": "mock",
+  "default_response": {
+    "code": 200,
+    "body": "{\"url\": \"$API_MEDIA_DOWNLOAD_URL/file.jpg\"}"
+  }
+}
+```
+
+At runtime, Dojo replaces `$API_MEDIA_DOWNLOAD_URL` with the actual proxy
+address (e.g. `http://127.0.0.1:54321/media_download`). This lets you chain
+mock APIs: one returns a URL, and the SUT follows that URL back through another
+Dojo mock, all without hardcoding addresses.
+
+Expansion uses Go's `os.ExpandEnv` and applies to both `default_response.body`
+and per-expectation `Respond:` bodies.
+
+### Binary File Responses
+
+Mock APIs can serve binary files (images, PDFs, etc.) using `file` and
+`content_type` in `default_response`:
+
+```json
+{
+  "mode": "mock",
+  "default_response": {
+    "code": 200,
+    "file": "photo.jpg",
+    "content_type": "image/jpeg"
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `file` | Path to a binary file. Resolved relative to the API config's directory (test dir first, suite dir fallback). |
+| `content_type` | `Content-Type` header for the response (defaults to `application/json` when omitted). |
+
+Binary file payloads skip `$VAR` expansion to avoid corrupting binary data.
+
+Place the API override and the binary file together in the test directory:
+
+```text
+test_media_process/
+  apis/
+    media.json                   # {"file": "photo.jpg", "content_type": "image/jpeg"}
+  photo.jpg                      # Served as the mock response body
+  media_process.plan
+```
+
+Test-level API overrides apply even when the plan has no `Expect` clause for
+that API -- Dojo uses the override for mock responses whenever that test is the
+sole active test.

@@ -20,10 +20,11 @@ type PayloadSpec struct {
 
 // DefaultResponse defines the payload returned to the SUT upon successful correlation.
 type DefaultResponse struct {
-	Body    string `json:"body,omitempty"`
-	File    string `json:"file,omitempty"`
-	Code    int    `json:"code,omitempty"`
-	Payload []byte `json:"-"`
+	Body        string `json:"body,omitempty"`
+	File        string `json:"file,omitempty"`
+	Code        int    `json:"code,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+	Payload     []byte `json:"-"`
 }
 
 // ExpectationSpec pairs an expected request with the response to return.
@@ -328,11 +329,14 @@ func LoadWorkspace(baseDir string) (*Workspace, error) {
 									if err := loadJSON(filepath.Join(testAPIsDir, tae.Name()), &cfg); err != nil {
 										return nil, err
 									}
-									expandAPIConfig(&cfg)
-									if err := validateAPIConfig(name, &cfg); err != nil {
-										return nil, fmt.Errorf("in test %s: %w", te.Name(), err)
-									}
-									test.APIs[name] = cfg
+								expandAPIConfig(&cfg)
+								if err := validateAPIConfig(name, &cfg); err != nil {
+									return nil, fmt.Errorf("in test %s: %w", te.Name(), err)
+								}
+								if err := resolvePayload(&cfg, testPath, suitePath); err != nil {
+									return nil, fmt.Errorf("in test %s api %s: %w", te.Name(), name, err)
+								}
+								test.APIs[name] = cfg
 								}
 							}
 						}

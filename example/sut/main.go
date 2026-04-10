@@ -126,6 +126,7 @@ const messageSystemPrompt = "You are a customer service response writer for Tech
 func main() {
 	http.HandleFunc("/trigger", handleTrigger)
 	http.HandleFunc("/upload", handleUpload)
+	http.HandleFunc("/media-process", handleMediaProcess)
 	http.HandleFunc("/ask", handleAsk)
 
 	port := ":8080"
@@ -415,4 +416,85 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
 	w.Write([]byte(fmt.Sprintf(`{"status":"ok","description":"%s"}`, description)))
+}
+
+func handleMediaProcess(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	var req struct {
+		MediaID string `json:"media_id"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || req.MediaID == "" {
+		http.Error(w, "missing media_id", 400)
+		return
+	}
+	fmt.Printf("[SUT] /media-process media_id=%s\n", req.MediaID)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	mediaURL := os.Getenv("API_MEDIA_URL")
+	if mediaURL == "" {
+		http.Error(w, "API_MEDIA_URL not set", 500)
+		return
+	}
+	target := mediaURL + "/download/" + req.MediaID
+	resp, err := client.Get(target)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("media fetch: %v", err), 502)
+		return
+	}
+	mediaBytes, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	fmt.Printf("[SUT] downloaded %d bytes from media API\n", len(mediaBytes))
+
+	greq := geminiRequest{
+		Contents: []geminiContent{
+			{Role: "user", Parts: []geminiPart{{Text: fmt.Sprintf("Analyse this %d-byte media file", len(mediaBytes))}}},
+		},
+		SystemInstruction: geminiSystemInstruction{
+			Parts: []geminiPart{{Text: "You are a vision assistant. Analyse uploaded images."}},
+		},
+		GenerationConfig: geminiGenerationConfig{
+			Temperature:      0.7,
+			TopP:             0.95,
+			TopK:             40,
+			MaxOutputTokens:  1024,
+			ResponseMIMEType: "application/json",
+		},
+		SafetySettings: []geminiSafetySetting{
+			{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+			{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+			{Category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+			{Category: "HARM_CATEGORY_DANGEROUS_CONTENT", Threshold: "BLOCK_MEDIUM_AND_ABOVE"},
+		},
+	}
+
+	description := "unknown"
+	geminiURL := os.Getenv("API_GEMINI_URL")
+	if geminiURL != "" {
+		payload, err := json.Marshal(greq)
+		if err == nil {
+			target := geminiURL + "/v1beta/models/gemini-2.5-flash:generateContent"
+			gResp, err := client.Post(target, "application/json", bytes.NewReader(payload))
+			if err == nil {
+				respBody, _ := io.ReadAll(gResp.Body)
+				gResp.Body.Close()
+
+				var gr geminiResponse
+				if json.Unmarshal(respBody, &gr) == nil &&
+					len(gr.Candidates) > 0 &&
+					len(gr.Candidates[0].Content.Parts) > 0 {
+					var inner struct {
+						Description string `json:"description"`
+					}
+					if json.Unmarshal([]byte(gr.Candidates[0].Content.Parts[0].Text), &inner) == nil && inner.Description != "" {
+						description = inner.Description
+					}
+				}
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	w.Write([]byte(fmt.Sprintf(`{"status":"ok","description":"%s","bytes":%d}`, description, len(mediaBytes))))
 }

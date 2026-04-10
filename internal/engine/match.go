@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -135,6 +136,29 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) doj
 
 	if activeTest != nil {
 		apiConfig = effectiveAPIConfig(suite, activeTest, apiName)
+	} else {
+		// No expectation matched, but if exactly one active test carries a
+		// test-level API override for this API, use that config for the mock
+		// response. This lets tests override default_response (e.g. serve a
+		// binary file) without needing an Expect clause.
+		var override *workspace.APIConfig
+		e.Registry.ForEach(func(_ string, at *ActiveTest) bool {
+			if tcfg, ok := at.Test.APIs[apiName]; ok {
+				if override != nil {
+					override = nil // ambiguous — more than one test overrides
+					return false
+				}
+				override = &tcfg
+			}
+			return true
+		})
+		if override != nil {
+			apiConfig = *override
+		}
+	}
+
+	if activeTest != nil {
+		apiConfig = effectiveAPIConfig(suite, activeTest, apiName)
 
 		exps := activeTest.Expectations[apiName]
 		exp := exps[matchedIdx]
@@ -170,7 +194,12 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) doj
 		if result.MockCode == 0 {
 			result.MockCode = 200
 		}
-		result.MockResponse = apiConfig.DefaultResponse.Payload
+		result.MockContentType = apiConfig.DefaultResponse.ContentType
+		payload := apiConfig.DefaultResponse.Payload
+		if apiConfig.DefaultResponse.File == "" {
+			payload = []byte(os.ExpandEnv(string(payload)))
+		}
+		result.MockResponse = payload
 	}
 
 	return result

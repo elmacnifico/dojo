@@ -1,8 +1,5 @@
 {
-  "messaging_product": "whatsapp",
-  "recipient_type": "individual",
   "to": "+15555550200",
-  "type": "text",
   "text": {
     "body": "Welcome! Your account has been created."
   }

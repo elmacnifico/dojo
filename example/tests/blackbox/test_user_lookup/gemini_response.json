@@ -18,11 +18,5 @@
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "probability": "NEGLIGIBLE"}
       ]
     }
-  ],
-  "usageMetadata": {
-    "promptTokenCount": 156,
-    "candidatesTokenCount": 87,
-    "totalTokenCount": 243
-  },
-  "modelVersion": "gemini-2.5-flash-001"
+  ]
 }
