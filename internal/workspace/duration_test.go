@@ -81,8 +81,11 @@ func TestTimeoutConfigResolveDefaults(t *testing.T) {
 	if tc.TCPDialTimeout.Duration != DefaultTCPDialTimeout {
 		t.Errorf("TCPDialTimeout: got %v, want %v", tc.TCPDialTimeout.Duration, DefaultTCPDialTimeout)
 	}
-	if tc.HTTPClient.Duration != DefaultHTTPClient {
-		t.Errorf("HTTPClient: got %v, want %v", tc.HTTPClient.Duration, DefaultHTTPClient)
+	if tc.Perform.Duration != DefaultPerform {
+		t.Errorf("Perform: got %v, want %v", tc.Perform.Duration, DefaultPerform)
+	}
+	if tc.Expect.Duration != DefaultExpect {
+		t.Errorf("Expect: got %v, want %v", tc.Expect.Duration, DefaultExpect)
 	}
 	if tc.AIEvaluator.Duration != DefaultAIEvaluator {
 		t.Errorf("AIEvaluator: got %v, want %v", tc.AIEvaluator.Duration, DefaultAIEvaluator)
@@ -96,7 +99,8 @@ func TestTimeoutConfigCustomValues(t *testing.T) {
 		SUTStartup:      Duration{Duration: 10 * time.Second},
 		TCPPollInterval: Duration{Duration: 100 * time.Millisecond},
 		TCPDialTimeout:  Duration{Duration: 500 * time.Millisecond},
-		HTTPClient:      Duration{Duration: 15 * time.Second},
+		Perform:         Duration{Duration: 15 * time.Second},
+		Expect:          Duration{Duration: 5 * time.Second},
 		AIEvaluator:     Duration{Duration: 60 * time.Second},
 	}
 	tc.ResolveDefaults()
@@ -110,8 +114,11 @@ func TestTimeoutConfigCustomValues(t *testing.T) {
 	if tc.TCPDialTimeout.Duration != 500*time.Millisecond {
 		t.Errorf("TCPDialTimeout: got %v, want 500ms", tc.TCPDialTimeout.Duration)
 	}
-	if tc.HTTPClient.Duration != 15*time.Second {
-		t.Errorf("HTTPClient: got %v, want 15s", tc.HTTPClient.Duration)
+	if tc.Perform.Duration != 15*time.Second {
+		t.Errorf("Perform: got %v, want 15s", tc.Perform.Duration)
+	}
+	if tc.Expect.Duration != 5*time.Second {
+		t.Errorf("Expect: got %v, want 5s", tc.Expect.Duration)
 	}
 	if tc.AIEvaluator.Duration != 60*time.Second {
 		t.Errorf("AIEvaluator: got %v, want 60s", tc.AIEvaluator.Duration)
@@ -125,7 +132,7 @@ func TestTimeoutConfigFromJSON(t *testing.T) {
 		"concurrency": 5,
 		"timeouts": {
 			"sut_startup": "10s",
-			"http_client": "15s"
+			"perform": "15s"
 		}
 	}`
 
@@ -137,8 +144,8 @@ func TestTimeoutConfigFromJSON(t *testing.T) {
 	if cfg.Timeouts.SUTStartup.Duration != 10*time.Second {
 		t.Errorf("SUTStartup: got %v, want 10s", cfg.Timeouts.SUTStartup.Duration)
 	}
-	if cfg.Timeouts.HTTPClient.Duration != 15*time.Second {
-		t.Errorf("HTTPClient: got %v, want 15s", cfg.Timeouts.HTTPClient.Duration)
+	if cfg.Timeouts.Perform.Duration != 15*time.Second {
+		t.Errorf("Perform: got %v, want 15s", cfg.Timeouts.Perform.Duration)
 	}
 	// Zero-valued fields should be zero before ResolveDefaults
 	if cfg.Timeouts.TCPPollInterval.Duration != 0 {

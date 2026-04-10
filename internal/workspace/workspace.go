@@ -51,6 +51,16 @@ type APIConfig struct {
 	OrderedExpectations []ExpectationSpec `json:"-"`
 }
 
+// TimeoutDuration parses the per-API Timeout string into a time.Duration.
+// Returns zero if the field is empty or unparseable.
+func (a APIConfig) TimeoutDuration() time.Duration {
+	if a.Timeout == "" {
+		return 0
+	}
+	d, _ := time.ParseDuration(a.Timeout)
+	return d
+}
+
 // EntrypointConfig represents how Dojo triggers the SUT to start a test.
 type EntrypointConfig struct {
 	Type             string            `json:"type"`
@@ -115,7 +125,8 @@ const (
 	DefaultSUTShutdown     = 5 * time.Second
 	DefaultTCPPollInterval = 50 * time.Millisecond
 	DefaultTCPDialTimeout  = 300 * time.Millisecond
-	DefaultHTTPClient      = 5 * time.Second
+	DefaultPerform         = 5 * time.Second
+	DefaultExpect          = 2 * time.Second
 	DefaultAIEvaluator     = 30 * time.Second
 )
 
@@ -125,7 +136,8 @@ type TimeoutConfig struct {
 	SUTShutdown     Duration `json:"sut_shutdown,omitempty"`
 	TCPPollInterval Duration `json:"tcp_poll_interval,omitempty"`
 	TCPDialTimeout  Duration `json:"tcp_dial_timeout,omitempty"`
-	HTTPClient      Duration `json:"http_client,omitempty"`
+	Perform         Duration `json:"perform,omitempty"`
+	Expect          Duration `json:"expect,omitempty"`
 	AIEvaluator     Duration `json:"ai_evaluator,omitempty"`
 }
 
@@ -143,8 +155,11 @@ func (tc *TimeoutConfig) ResolveDefaults() {
 	if tc.TCPDialTimeout.Duration == 0 {
 		tc.TCPDialTimeout.Duration = DefaultTCPDialTimeout
 	}
-	if tc.HTTPClient.Duration == 0 {
-		tc.HTTPClient.Duration = DefaultHTTPClient
+	if tc.Perform.Duration == 0 {
+		tc.Perform.Duration = DefaultPerform
+	}
+	if tc.Expect.Duration == 0 {
+		tc.Expect.Duration = DefaultExpect
 	}
 	if tc.AIEvaluator.Duration == 0 {
 		tc.AIEvaluator.Duration = DefaultAIEvaluator
@@ -625,7 +640,8 @@ func validateSuiteConfig(suiteName string, cfg *DojoConfig) error {
 		{"sut_shutdown", tc.SUTShutdown},
 		{"tcp_poll_interval", tc.TCPPollInterval},
 		{"tcp_dial_timeout", tc.TCPDialTimeout},
-		{"http_client", tc.HTTPClient},
+		{"perform", tc.Perform},
+		{"expect", tc.Expect},
 		{"ai_evaluator", tc.AIEvaluator},
 	}
 	for _, d := range durations {

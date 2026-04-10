@@ -102,11 +102,37 @@ Supported providers: `gemini`, `openai`, `anthropic`.
 ```json
 {
   "timeouts": {
+    "perform": "5s",
+    "expect": "2s",
     "sut_startup": "90s",
     "sut_shutdown": "5s",
-    "http_client": "5s",
     "ai_evaluator": "30s"
   }
+}
+```
+
+| Key | Default | Controls |
+|-----|---------|----------|
+| `perform` | `5s` | Perform trigger HTTP call and live upstream proxy timeout. |
+| `expect` | `2s` | How long each Expect waits before timing out. Per-API `timeout` in `apis/*.json` overrides this. |
+| `sut_startup` | `90s` | Max wait for SUT to accept TCP connections. |
+| `sut_shutdown` | `5s` | Grace period when killing the SUT process. |
+| `ai_evaluator` | `30s` | Timeout for AI evaluation LLM calls. |
+
+For real LLM suites (not mocked), set per-API timeout:
+
+```json
+{
+  "mode": "live",
+  "timeout": "30s"
+}
+```
+
+Or per-test override in `test_slow/apis/gemini.json`:
+
+```json
+{
+  "timeout": "60s"
 }
 ```
 

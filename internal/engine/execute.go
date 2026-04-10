@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"dojo/internal/workspace"
 
@@ -143,6 +144,11 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 			Target: apiName,
 			Index:  idx,
 		}
+		if d := test.APIs[apiName].TimeoutDuration(); d > 0 {
+			exp.Deadline = d
+		} else {
+			exp.Deadline = suite.Config.Timeouts.Expect.Duration
+		}
 		for _, clause := range l.Clauses {
 			if strings.ToLower(clause.Key) == "evaluate response" {
 				exp.RequiresEval = true
@@ -174,7 +180,7 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 			req.Header.Set(k, v)
 		}
 
-		client := &http.Client{Timeout: suite.Config.Timeouts.HTTPClient.Duration}
+		client := &http.Client{Timeout: suite.Config.Timeouts.Perform.Duration}
 		if ep.FollowRedirects != nil && !*ep.FollowRedirects {
 			client.CheckRedirect = func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
@@ -216,6 +222,21 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 		}
 	default:
 		return fmt.Errorf("unsupported entrypoint type %q for %q; only \"http\" is currently supported", ep.Type, epName)
+	}
+
+	// Launch per-expectation timeout goroutines.
+	for api, exps := range active.Expectations {
+		for _, exp := range exps {
+			go func(apiName string, e *Expectation) {
+				select {
+				case <-time.After(e.Deadline):
+					active.MarkFulfilled(apiName, e.Index,
+						fmt.Errorf("timed out after %s waiting for expected request", e.Deadline))
+				case <-active.done:
+				case <-ctx.Done():
+				}
+			}(api, exp)
+		}
 	}
 
 	// Wait for phase 1 expectations.

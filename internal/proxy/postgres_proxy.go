@@ -20,6 +20,11 @@ import (
 type pgConn struct {
 	id        string // correlation ID, set when a matching query arrives
 	lastQuery string // most recent SQL query on this connection
+	// stmts maps prepared-statement names to their SQL text so that
+	// Bind messages (which carry only the name) can be resolved back to
+	// the original query for matching.  pgx v5's default CacheStatement
+	// mode reuses named statements across queries on the same connection.
+	stmts map[string]string
 }
 
 // PostgresProxy represents the Observer for Postgres, which proxies to a live DB or mocks responses.
@@ -112,7 +117,7 @@ func isConnClosed(err error) bool {
 func (p *PostgresProxy) addConn(c net.Conn) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.conns[c] = &pgConn{}
+	p.conns[c] = &pgConn{stmts: make(map[string]string)}
 }
 
 func (p *PostgresProxy) removeConn(c net.Conn) {
@@ -315,6 +320,9 @@ func (p *PostgresProxy) acceptLoop() {
 				p.mu.Lock()
 				if pc, ok := p.conns[clientConn]; ok {
 					pc.id = mr.MatchedID
+					if m.Name != "" {
+						pc.stmts[m.Name] = m.Query
+					}
 				}
 				p.mu.Unlock()
 				if mr.IsMock {
@@ -323,7 +331,33 @@ func (p *PostgresProxy) acceptLoop() {
 					}
 				}
 					case *pgproto3.Bind:
-						if isWireMock {
+						bindMocked := false
+						p.mu.Lock()
+						var resolvedSQL string
+						if pc, ok := p.conns[clientConn]; ok {
+							resolvedSQL = pc.stmts[m.PreparedStatement]
+						}
+						p.mu.Unlock()
+
+						if resolvedSQL != "" {
+							p.recordQuery(clientConn, resolvedSQL)
+							var mr dojo.MatchResult
+							if p.matchTable != nil {
+								mr = p.matchTable.ProcessRequest("postgres", "", []byte(resolvedSQL))
+							}
+							p.mu.Lock()
+							if pc, ok := p.conns[clientConn]; ok {
+								pc.id = mr.MatchedID
+							}
+							p.mu.Unlock()
+							if mr.IsMock {
+								if !writeMsg(&pgproto3.BindComplete{}) {
+									return
+								}
+								bindMocked = true
+							}
+						}
+						if isWireMock && !bindMocked {
 							if !writeMsg(&pgproto3.BindComplete{}) {
 								return
 							}

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"sync"
+	"time"
 
 	"dojo/internal/workspace"
 )
@@ -14,6 +15,7 @@ type Expectation struct {
 	Fulfilled    bool
 	Error        error
 	RequiresEval bool
+	Deadline     time.Duration
 }
 
 // ActiveTest represents a currently executing test within the Suite.
@@ -28,6 +30,8 @@ type ActiveTest struct {
 }
 
 // MarkFulfilled marks the expectation at the given index for an API as completed.
+// If the expectation is already fulfilled (by a prior match or timeout), the call
+// is a no-op to prevent races between match handlers and timeout goroutines.
 func (a *ActiveTest) MarkFulfilled(apiName string, idx int, err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -36,10 +40,11 @@ func (a *ActiveTest) MarkFulfilled(apiName string, idx int, err error) {
 		return
 	}
 	exp := exps[idx]
-	exp.Fulfilled = true
-	if exp.Error == nil {
-		exp.Error = err
+	if exp.Fulfilled {
+		return
 	}
+	exp.Fulfilled = true
+	exp.Error = err
 
 	allDone := true
 	for _, slice := range a.Expectations {

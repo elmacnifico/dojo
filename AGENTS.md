@@ -11,6 +11,7 @@ Dojo is a testing engine that executes `.plan` files. It evaluates a SUT (Softwa
 * **The Observer:** Intercepts outbound SUT traffic (HTTP, Postgres, etc.) and matches it against expectations in the `.plan` file.
 * **Configuration:** Technical details (URLs, timeouts) live in `apis/*.json`. The DSL (`test.plan`) remains purely logical.
 * **Matching:** Outbound traffic is tied to the active test by **normalized full equality** between the resolved `expected_request` fixture and the actual payload (SQL: collapse whitespace and strip trailing `;`; HTTP: canonical JSON when valid). There is no separate correlation block for routing. **Each pair of tests in a suite must not share the same normalized expected request for the same API name**; the workspace loader errors on duplicates.
+* **Timeouts:** `dojo.config` timeouts mirror the DSL: `perform` (trigger call, default 5s) and `expect` (wait for outbound traffic, default 2s). Per-API `timeout` in `apis/*.json` overrides `expect` for that API. For real LLM suites, set `timeout: "30s"` (or higher) on the LLM API config.
 
 ## 3. Architectural Interfaces
 Design the system around these core interfaces. Do not deviate without explicit permission.

@@ -1205,7 +1205,7 @@ func TestSUTCrashPropagatesMidTest(t *testing.T) {
 	testutil.CreateFile(t, tmpDir, "suite/dojo.config", fmt.Sprintf(`{
 		"concurrency": 1,
 		"sut_command": "go run ./sut.go",
-		"timeouts": {"sut_startup": "10s", "http_client": "2s"}
+		"timeouts": {"sut_startup": "10s", "perform": "2s"}
 	}`))
 
 	// SUT that listens on :18923, responds once, then crashes.
@@ -1606,5 +1606,186 @@ func TestFollowRedirects(t *testing.T) {
 	}
 	if summary.Failed != 0 {
 		t.Fatalf("expected 0 failures, got %d: %v", summary.Failed, summary.Failures)
+	}
+}
+
+func TestExpectTimeout_PerAPITimeout(t *testing.T) {
+	t.Parallel()
+	sutServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer sutServer.Close()
+
+	tmpDir := t.TempDir()
+
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", fmt.Sprintf(`{
+		"type":"http", "path":"/trigger", "url":%q
+	}`, sutServer.URL))
+	testutil.CreateFile(t, tmpDir, "suite/apis/external.json", `{
+		"mode":"mock", "url":"/v1/call", "timeout":"500ms",
+		"expected_request":{"body":"{\"will_never_arrive\":true}"},
+		"default_response":{"code":200,"body":"{}"}
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_timeout/test.plan",
+		"Perform -> entrypoints/webhook\nExpect -> external")
+
+	ws, err := workspace.LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace: %v", err)
+	}
+
+	eng := engine.NewEngine(ws)
+	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+		t.Fatalf("StartProxies: %v", err)
+	}
+	defer eng.StopProxies()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	summary, err := eng.RunSuite(ctx, "suite", nil)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("RunSuite: %v", err)
+	}
+	if summary.Failed != 1 {
+		t.Fatalf("expected 1 failure, got %d", summary.Failed)
+	}
+	if !strings.Contains(summary.Failures[0].Reason, "timed out") {
+		t.Fatalf("expected timeout error, got: %s", summary.Failures[0].Reason)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("test took %s; per-API timeout of 500ms should have kicked in much sooner", elapsed)
+	}
+}
+
+func TestExpectTimeout_GlobalFallback(t *testing.T) {
+	t.Parallel()
+	sutServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer sutServer.Close()
+
+	tmpDir := t.TempDir()
+
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{
+		"concurrency":1,
+		"timeouts":{"expect":"500ms"}
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", fmt.Sprintf(`{
+		"type":"http", "path":"/trigger", "url":%q
+	}`, sutServer.URL))
+	testutil.CreateFile(t, tmpDir, "suite/apis/external.json", `{
+		"mode":"mock", "url":"/v1/call",
+		"expected_request":{"body":"{\"will_never_arrive\":true}"},
+		"default_response":{"code":200,"body":"{}"}
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_timeout/test.plan",
+		"Perform -> entrypoints/webhook\nExpect -> external")
+
+	ws, err := workspace.LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace: %v", err)
+	}
+
+	eng := engine.NewEngine(ws)
+	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+		t.Fatalf("StartProxies: %v", err)
+	}
+	defer eng.StopProxies()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	summary, err := eng.RunSuite(ctx, "suite", nil)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("RunSuite: %v", err)
+	}
+	if summary.Failed != 1 {
+		t.Fatalf("expected 1 failure, got %d", summary.Failed)
+	}
+	if !strings.Contains(summary.Failures[0].Reason, "timed out") {
+		t.Fatalf("expected timeout error, got: %s", summary.Failures[0].Reason)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("test took %s; global expect timeout of 500ms should have kicked in much sooner", elapsed)
+	}
+}
+
+func TestExpectTimeout_IndependentFailure(t *testing.T) {
+	t.Parallel()
+
+	var proxyAddr string
+	sutServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/trigger" {
+			client := &http.Client{Timeout: 2 * time.Second}
+			resp, err := client.Post("http://"+proxyAddr+"/fulfilled",
+				"application/json", strings.NewReader(`{"match":"yes"}`))
+			if err == nil {
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+			w.WriteHeader(200)
+			return
+		}
+		http.Error(w, "Not found", 404)
+	}))
+	defer sutServer.Close()
+
+	tmpDir := t.TempDir()
+
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{
+		"concurrency":1,
+		"timeouts":{"expect":"500ms"}
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", fmt.Sprintf(`{
+		"type":"http", "path":"/trigger", "url":%q
+	}`, sutServer.URL))
+	testutil.CreateFile(t, tmpDir, "suite/apis/fulfilled.json", `{
+		"mode":"mock", "url":"/v1/call",
+		"expected_request":{"body":"{\"match\":\"yes\"}"},
+		"default_response":{"code":200,"body":"{}"}
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/apis/missed.json", `{
+		"mode":"mock", "url":"/v1/other",
+		"expected_request":{"body":"{\"will_never_arrive\":true}"},
+		"default_response":{"code":200,"body":"{}"}
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_mixed/test.plan",
+		"Perform -> entrypoints/webhook\nExpect -> fulfilled\nExpect -> missed")
+
+	ws, err := workspace.LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace: %v", err)
+	}
+
+	eng := engine.NewEngine(ws)
+	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+		t.Fatalf("StartProxies: %v", err)
+	}
+	defer eng.StopProxies()
+
+	proxyAddr = eng.HTTPProxy.Addr()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	summary, err := eng.RunSuite(ctx, "suite", nil)
+	if err != nil {
+		t.Fatalf("RunSuite: %v", err)
+	}
+	if summary.Failed != 1 {
+		t.Fatalf("expected 1 failure, got %d", summary.Failed)
+	}
+	reason := summary.Failures[0].Reason
+	if !strings.Contains(reason, "missed") {
+		t.Fatalf("expected failure to mention 'missed' API, got: %s", reason)
+	}
+	if !strings.Contains(reason, "timed out") {
+		t.Fatalf("expected timeout error, got: %s", reason)
 	}
 }

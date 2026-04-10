@@ -533,6 +533,90 @@ rather than replacing it.
 
 ---
 
+## Timeouts
+
+Dojo provides two DSL-aligned timeout keys in `dojo.config`, plus per-API
+overrides in `apis/*.json`.
+
+### Global timeouts in `dojo.config`
+
+```json
+{
+  "timeouts": {
+    "perform": "5s",
+    "expect": "2s"
+  }
+}
+```
+
+| Key | Default | Controls |
+|-----|---------|----------|
+| `perform` | `5s` | How long the `Perform` HTTP trigger call to the SUT can take. Also used as the upstream timeout when proxying to real APIs in `"mode": "live"`. |
+| `expect` | `2s` | How long Dojo waits for each `Expect` line to be fulfilled before marking it as timed out. |
+
+The `expect` default of 2s is aggressive by design -- it catches broken tests
+fast instead of hanging forever. Each expectation times out independently: a
+missed expect fails with a timeout error while other expectations continue to
+be evaluated, so you see every failure in a single run.
+
+### Per-API timeout override in `apis/*.json`
+
+The `timeout` field on any API config overrides the global `expect` timeout for
+that specific API. This is the primary mechanism for accommodating slow
+dependencies:
+
+```json
+{
+  "mode": "live",
+  "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+  "timeout": "30s"
+}
+```
+
+### Per-test override via test-level `apis/`
+
+Since test-level `apis/*.json` overlays merge onto the suite config, you can
+override the timeout for a single test without affecting others:
+
+```json
+{
+  "timeout": "60s"
+}
+```
+
+Place this in `test_complex_prompt/apis/gemini.json` and only that test gets
+60s for Gemini calls.
+
+### Resolution order (first non-zero wins)
+
+1. Per-API `timeout` in `test_*/apis/*.json`
+2. Per-API `timeout` in suite-level `apis/*.json`
+3. `expect` in `dojo.config` `timeouts`
+4. Built-in default: `2s`
+
+### Long-running LLM queries
+
+For prompt regression tests that call real LLMs (not mocks), set `timeout` on
+the LLM API config:
+
+```json
+{
+  "mode": "live",
+  "timeout": "30s"
+}
+```
+
+Or raise the global `expect` timeout in `dojo.config` if all APIs in the suite
+are slow:
+
+```json
+{
+  "timeouts": { "expect": "30s" }
+}
+```
+
+---
+
 ## Walk-through: `test_user_deactivate`
 
 Here is a concrete end-to-end flow for one test in the example suite:
