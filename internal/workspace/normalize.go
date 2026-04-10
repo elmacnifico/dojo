@@ -61,3 +61,62 @@ func canonicalizeJSONValue(v any) any {
 		return v
 	}
 }
+
+// JSONSubsetMatch returns true when every field in expected exists in actual
+// with a matching value. Extra fields in actual are ignored at every nesting
+// level. For non-JSON payloads it falls back to whitespace-normalized contains.
+func JSONSubsetMatch(actual, expected []byte) bool {
+	actual = bytes.TrimSpace(actual)
+	expected = bytes.TrimSpace(expected)
+	if len(expected) == 0 {
+		return true
+	}
+
+	var av, ev any
+	aOK := json.Unmarshal(actual, &av) == nil && json.Valid(actual)
+	eOK := json.Unmarshal(expected, &ev) == nil && json.Valid(expected)
+
+	if aOK && eOK {
+		return jsonValueContains(av, ev)
+	}
+	// Non-JSON fallback: whitespace-collapsed contains.
+	na := strings.Join(strings.Fields(string(actual)), " ")
+	ne := strings.Join(strings.Fields(string(expected)), " ")
+	return strings.Contains(na, ne)
+}
+
+// jsonValueContains checks that every field in expected is present and matching
+// in actual. Objects allow extra keys in actual; arrays compare index-by-index
+// up to len(expected).
+func jsonValueContains(actual, expected any) bool {
+	switch ev := expected.(type) {
+	case map[string]any:
+		am, ok := actual.(map[string]any)
+		if !ok {
+			return false
+		}
+		for k, evv := range ev {
+			avv, exists := am[k]
+			if !exists || !jsonValueContains(avv, evv) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		aa, ok := actual.([]any)
+		if !ok {
+			return false
+		}
+		if len(aa) < len(ev) {
+			return false
+		}
+		for i, evv := range ev {
+			if !jsonValueContains(aa[i], evv) {
+				return false
+			}
+		}
+		return true
+	default:
+		return actual == expected
+	}
+}

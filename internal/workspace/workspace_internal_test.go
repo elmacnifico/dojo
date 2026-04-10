@@ -748,6 +748,41 @@ func TestNormalizeHTTPBody_CanonicalJSON(t *testing.T) {
 	}
 }
 
+func TestJSONSubsetMatch(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		actual   string
+		expected string
+		want     bool
+	}{
+		{"exact match", `{"a":1,"b":2}`, `{"a":1,"b":2}`, true},
+		{"subset match", `{"a":1,"b":2,"c":3}`, `{"a":1}`, true},
+		{"nested subset", `{"a":{"x":1,"y":2},"b":3}`, `{"a":{"x":1}}`, true},
+		{"missing key fails", `{"a":1}`, `{"a":1,"b":2}`, false},
+		{"value mismatch fails", `{"a":1}`, `{"a":2}`, false},
+		{"type mismatch fails", `{"a":"1"}`, `{"a":1}`, false},
+		{"array exact", `[1,2,3]`, `[1,2,3]`, true},
+		{"array prefix", `[1,2,3]`, `[1,2]`, true},
+		{"array too long fails", `[1,2]`, `[1,2,3]`, false},
+		{"array element mismatch", `[1,2,3]`, `[1,9]`, false},
+		{"nested array subset", `{"items":[{"id":1,"name":"a"},{"id":2}]}`, `{"items":[{"id":1}]}`, true},
+		{"empty expected matches anything", `{"a":1}`, ``, true},
+		{"empty object matches any object", `{"a":1,"b":2}`, `{}`, true},
+		{"non-json contains", `hello world foo`, `world`, true},
+		{"non-json no match", `hello world`, `xyz`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := JSONSubsetMatch([]byte(tt.actual), []byte(tt.expected))
+			if got != tt.want {
+				t.Errorf("JSONSubsetMatch(%s, %s) = %v, want %v", tt.actual, tt.expected, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateUniqueExpectedRequests(t *testing.T) {
 	t.Parallel()
 	t.Run("duplicate json same api fails", func(t *testing.T) {

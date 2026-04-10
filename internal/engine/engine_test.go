@@ -360,6 +360,98 @@ func TestProcessRequest_PostgresMatchesNormalizedSQL(t *testing.T) {
 	}
 }
 
+func TestProcessRequest_SubsetMatchSucceeds(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"gemini": {Mode: "mock", URL: "/v1/generate",
+				ExpectedRequest: &workspace.PayloadSpec{Payload: []byte(`{"contents":[{"role":"user"}]}`)},
+				DefaultResponse: &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"ok":true}`)},
+			},
+		},
+	}
+	active := &engine.ActiveTest{
+		ID:    "test_subset",
+		Suite: suite,
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Expectations: map[string]*engine.Expectation{
+			"gemini": {Target: "gemini"},
+		},
+	}
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("test_subset", active)
+
+	actual := []byte(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}],"generationConfig":{"temperature":0.7},"systemInstruction":{"parts":[{"text":"You are helpful."}]}}`)
+	m := eng.ProcessRequest("http", "gemini", actual)
+	if m.Err != nil {
+		t.Fatalf("unexpected error: %v", m.Err)
+	}
+	if m.MatchedID != "test_subset" {
+		t.Errorf("MatchedID: got %q, want %q", m.MatchedID, "test_subset")
+	}
+}
+
+func TestProcessRequest_SubsetMismatchFails(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"gemini": {Mode: "mock", URL: "/v1/generate",
+				ExpectedRequest: &workspace.PayloadSpec{Payload: []byte(`{"contents":[{"role":"user"}],"missing_key":"required"}`)},
+				DefaultResponse: &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"ok":true}`)},
+			},
+		},
+	}
+	active := &engine.ActiveTest{
+		ID:    "test_nomatch",
+		Suite: suite,
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Expectations: map[string]*engine.Expectation{
+			"gemini": {Target: "gemini"},
+		},
+	}
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("test_nomatch", active)
+
+	actual := []byte(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`)
+	m := eng.ProcessRequest("http", "gemini", actual)
+	if m.MatchedID != "" {
+		t.Errorf("expected no match, got MatchedID=%q", m.MatchedID)
+	}
+}
+
+func TestProcessRequest_PostgresContainsMatch(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"pgdb": {Protocol: "postgres", Mode: "mock",
+				ExpectedRequest: &workspace.PayloadSpec{Payload: []byte("INSERT INTO users")},
+				DefaultResponse: &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"ok":true}`)},
+			},
+		},
+	}
+	active := &engine.ActiveTest{
+		ID:    "test_pg_contains",
+		Suite: suite,
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Expectations: map[string]*engine.Expectation{
+			"pgdb": {Target: "pgdb"},
+		},
+	}
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("test_pg_contains", active)
+
+	m := eng.ProcessRequest("postgres", "", []byte("INSERT INTO users (id, name) VALUES ('1', 'alice')"))
+	if m.Err != nil {
+		t.Fatalf("unexpected error: %v", m.Err)
+	}
+	if m.MatchedID != "test_pg_contains" {
+		t.Errorf("MatchedID: got %q, want %q", m.MatchedID, "test_pg_contains")
+	}
+}
+
 func TestProcessRequest_MockCodeDefaultsTo200(t *testing.T) {
 	t.Parallel()
 	suite := &workspace.Suite{

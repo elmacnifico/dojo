@@ -256,18 +256,31 @@ At runtime, all four top-level keys are present in the resolved fixture.
 
 ## Request Matching
 
-Dojo matches intercepted SUT traffic to active tests using **normalized full
-equality** between the resolved expected fixture and the actual wire payload.
+Dojo matches intercepted SUT traffic to active tests using **subset matching**:
+the expected fixture only needs to contain the fields you care about. Extra
+fields in the actual payload are silently ignored at every nesting level.
 
-### Normalization rules
-- **SQL:** Collapse all whitespace to single spaces, strip trailing `;`.
-- **HTTP/JSON:** If valid JSON, canonicalize (sorted keys, compact). Otherwise collapse whitespace.
+### Matching rules
+- **HTTP/JSON:** The expected fixture is treated as a JSON subset of the actual
+  payload. Every key in the expected object must exist in actual with a matching
+  value (compared recursively). Arrays are compared element-by-element at the
+  same index; the expected array can be shorter than actual. Scalar values must
+  be equal. If either payload is not valid JSON, Dojo falls back to
+  whitespace-normalized substring matching.
+- **SQL:** Collapse all whitespace to single spaces, strip trailing `;`, then
+  check that the normalized expected string is contained in the normalized
+  actual query.
+
+This means fixture files only need to specify the fields the test cares about.
+A fixture that specifies every field still works identically (it is trivially
+a subset of itself).
 
 ### Uniqueness constraint
 
-No two tests in a suite may share the same normalized expected request for the
-same API. Dojo rejects duplicates at load time. This ensures every match is
-unambiguous.
+No two tests in a suite may share an identical normalized expected request for
+the same API. Dojo rejects exact duplicates at load time. If two different
+subset fixtures both match the same actual request at runtime, Dojo reports an
+ambiguous match error.
 
 ## Running a Suite
 

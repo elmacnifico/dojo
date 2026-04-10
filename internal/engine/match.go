@@ -38,9 +38,12 @@ func effectiveAPIConfig(suite *workspace.Suite, at *ActiveTest, apiName string) 
 
 func payloadsMatch(cfg workspace.APIConfig, actual, expected []byte) bool {
 	proto := workspace.APIProtocolForMatch(cfg)
-	na := workspace.NormalizePayloadForMatch(proto, actual)
-	ne := workspace.NormalizePayloadForMatch(proto, expected)
-	return na == ne
+	if proto == "postgres" {
+		na := workspace.NormalizeSQL(string(actual))
+		ne := workspace.NormalizeSQL(string(expected))
+		return strings.Contains(na, ne)
+	}
+	return workspace.JSONSubsetMatch(actual, expected)
 }
 
 // ProcessRequest correlates the intercepted request to an active test by
