@@ -1479,3 +1479,86 @@ func TestMockResponseContentType(t *testing.T) {
 		t.Errorf("expected Content-Type image/jpeg, got %q", gotContentType)
 	}
 }
+
+func TestExpectStatus(t *testing.T) {
+	sutServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(200)
+			w.Write([]byte("OK"))
+		case "/forbidden":
+			w.WriteHeader(403)
+			w.Write([]byte("Forbidden"))
+		case "/teapot":
+			w.WriteHeader(418)
+			w.Write([]byte("I'm a teapot"))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer sutServer.Close()
+
+	tmpDir := t.TempDir()
+
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/health.json", fmt.Sprintf(`{
+		"type": "http", "path": "/health", "url": %q
+	}`, sutServer.URL))
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/forbidden.json", fmt.Sprintf(`{
+		"type": "http", "path": "/forbidden", "url": %q
+	}`, sutServer.URL))
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/teapot.json", fmt.Sprintf(`{
+		"type": "http", "path": "/teapot", "url": %q
+	}`, sutServer.URL))
+
+	// test_ok: 200 matches 200 -> pass
+	testutil.CreateFile(t, tmpDir, "suite/test_ok/test.plan",
+		`Perform -> entrypoints/health -> ExpectStatus: "200"`)
+	// test_mismatch: 403 != 200 -> fail
+	testutil.CreateFile(t, tmpDir, "suite/test_mismatch/test.plan",
+		`Perform -> entrypoints/forbidden -> ExpectStatus: "200"`)
+	// test_418: 418 matches 418 -> pass (proves 4xx status can be expected)
+	testutil.CreateFile(t, tmpDir, "suite/test_418/test.plan",
+		`Perform -> entrypoints/teapot -> ExpectStatus: "418"`)
+
+	ws, err := workspace.LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace: %v", err)
+	}
+
+	eng := engine.NewEngine(ws)
+	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+		t.Fatalf("StartProxies: %v", err)
+	}
+	defer eng.StopProxies()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	summary, err := eng.RunSuite(ctx, "suite", nil)
+	if err != nil {
+		t.Fatalf("RunSuite: %v", err)
+	}
+
+	if summary.Passed != 2 {
+		t.Errorf("expected 2 passed, got %d", summary.Passed)
+	}
+	if summary.Failed != 1 {
+		t.Errorf("expected 1 failed, got %d", summary.Failed)
+	}
+
+	var found bool
+	for _, f := range summary.Failures {
+		if f.TestName == "test_mismatch" {
+			found = true
+			if !strings.Contains(f.Reason, "expected HTTP status 200, got 403") {
+				t.Errorf("unexpected failure reason: %s", f.Reason)
+			}
+			if f.Expected != "200" || f.Actual != "403" {
+				t.Errorf("structured fields wrong: expected=%q actual=%q", f.Expected, f.Actual)
+			}
+		}
+	}
+	if !found {
+		t.Error("test_mismatch should have failed but didn't appear in failures")
+	}
+}

@@ -243,7 +243,8 @@ Define how Dojo triggers the SUT.
 | Field | Description |
 |-------|-------------|
 | `type` | Must be `http`. |
-| `path` | The SUT endpoint Dojo will POST to. |
+| `method` | HTTP method. Defaults to `POST`. Set to `GET`, `PUT`, `DELETE`, etc. as needed. |
+| `path` | The SUT endpoint Dojo will call. May include query parameters (e.g. `/webhook?hub.mode=subscribe`). |
 
 ## The `.plan` DSL
 
@@ -261,6 +262,7 @@ Syntax: `Action -> Target -> Clause: value -> Clause: value`
 | Clause | Used with | Description |
 |--------|-----------|-------------|
 | `Payload:` | Perform (entrypoint) | Fixture file sent as the trigger body. |
+| `ExpectStatus:` | Perform (entrypoint) | Assert the SUT's HTTP response status code (e.g. `"200"`, `"403"`). Without this, Dojo fails on any status >= 400. |
 | `Query:` | Perform (postgres) | SQL fixture file to execute against the live database. |
 | `Expect:` | Perform (postgres) | Assertion on query result: `"N"` for row count, `file.json` for JSON comparison, or omit for OK-only. |
 | `Request:` | Expect | Fixture file containing the expected outbound payload. |
@@ -282,6 +284,32 @@ Line by line:
 2. SUT must issue a SQL query matching `postgres_request.sql`.
 3. SUT must call Gemini with a body matching `gemini_request.json`; Dojo returns `gemini_response.json`.
 4. SUT must call WhatsApp with a body matching `whatsapp_request.json`; Dojo returns `apis/whatsapp.json`'s `default_response`.
+
+### Example: ExpectStatus (health check)
+
+Assert the SUT's HTTP response status code. Useful for health checks, webhook
+verification, and testing error responses.
+
+```text
+Perform -> entrypoints/health -> ExpectStatus: "200"
+```
+
+With `entrypoints/health.json`:
+```json
+{
+  "type": "http",
+  "method": "GET",
+  "path": "/"
+}
+```
+
+Without `ExpectStatus`, Dojo fails the test on any status >= 400. With
+`ExpectStatus`, Dojo checks for an exact match -- so you can also assert that
+a bad request correctly returns an error:
+
+```text
+Perform -> entrypoints/webhook_bad_token -> ExpectStatus: "403"
+```
 
 ### Example: binary payload
 

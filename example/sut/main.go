@@ -124,6 +124,10 @@ const messageSystemPrompt = "You are a customer service response writer for Tech
 	"write a helpful, professional response."
 
 func main() {
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("OK"))
+	})
 	http.HandleFunc("/trigger", handleTrigger)
 	http.HandleFunc("/upload", handleUpload)
 	http.HandleFunc("/media-process", handleMediaProcess)

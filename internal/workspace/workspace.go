@@ -54,10 +54,19 @@ type APIConfig struct {
 // EntrypointConfig represents how Dojo triggers the SUT to start a test.
 type EntrypointConfig struct {
 	Type             string            `json:"type"`
+	Method           string            `json:"method,omitempty"`
 	Path             string            `json:"path"`
 	URL              string            `json:"url,omitempty"`
 	Headers          map[string]string `json:"headers,omitempty"`
 	ExpectedResponse *PayloadSpec      `json:"expected_response,omitempty"`
+}
+
+// HTTPMethod returns the HTTP method, defaulting to POST.
+func (e EntrypointConfig) HTTPMethod() string {
+	if e.Method != "" {
+		return strings.ToUpper(e.Method)
+	}
+	return "POST"
 }
 
 // EvaluatorConfig holds the rules for AI evaluation.

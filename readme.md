@@ -186,9 +186,10 @@ tests/blackbox/
     whatsapp.json                        # mode: mock, inline default_response
     media.json                           # mode: mock, generic default (overridden per-test)
   entrypoints/
-    webhook.json                         # How Dojo triggers the SUT (JSON payload)
-    upload.json                          # How Dojo triggers the SUT (binary payload)
-    media_process.json                   # How Dojo triggers the SUT (media processing)
+    webhook.json                         # How Dojo triggers the SUT (POST, JSON payload)
+    upload.json                          # How Dojo triggers the SUT (POST, binary payload)
+    media_process.json                   # How Dojo triggers the SUT (POST, media processing)
+    health.json                          # GET health check (ExpectStatus assertion)
   seed/
     schema.sql                           # Shared DDL, run before all tests
   gemini_request.json                    # Suite-level fixture (deep-merge base)
@@ -256,6 +257,9 @@ tests/blackbox/
     gemini_response.json
     apis/
       media.json                         # Overrides suite mock: file + content_type
+
+  test_health_check/
+    health_check.plan                    # GET /health -> ExpectStatus: "200"
 ```
 
 Key observations:
@@ -279,6 +283,9 @@ Key observations:
   **`Perform -> postgres`** modes in a single plan: row count (`Expect: "1"`),
   JSON subset (`Expect: expected.json`), OK-only (no `Expect:`), and zero rows
   (`Expect: "0"`).
+* The `test_health_check` test demonstrates **`ExpectStatus`** and **GET method
+  entrypoints** -- it sends a `GET /health` and asserts HTTP 200 with no
+  `Expect` clauses needed.
 
 ---
 
@@ -329,6 +336,37 @@ Expect -> whatsapp -> Request: whatsapp_request.json
 The structure is identical. Only the fixture contents differ -- different
 `incoming.json`, different `gemini_request.json` overlay, different SQL in
 `postgres_request.sql`. The `.plan` stays clean.
+
+### ExpectStatus: Asserting HTTP Response Codes
+
+Use `ExpectStatus:` on a `Perform` line to assert the SUT's HTTP response
+status code. Without `ExpectStatus`, Dojo fails the test on any status >= 400.
+With it, Dojo checks for an exact match.
+
+**Health check (GET):**
+
+```text
+Perform -> entrypoints/health -> ExpectStatus: "200"
+```
+
+With `entrypoints/health.json`:
+```json
+{
+  "type": "http",
+  "method": "GET",
+  "path": "/"
+}
+```
+
+**Error assertion:** Verify that bad input correctly returns an error:
+
+```text
+Perform -> entrypoints/webhook_bad_token -> ExpectStatus: "403"
+```
+
+Entrypoints support a `method` field (defaults to `POST`). Set it to `GET`,
+`PUT`, `DELETE`, etc. The `path` may include query parameters (e.g.
+`/webhook?hub.mode=subscribe&hub.verify_token=test`).
 
 ### Postgres Wire Protocol Verification
 
@@ -452,9 +490,10 @@ rather than replacing it.
 
 Here is a concrete end-to-end flow for one test in the example suite:
 
-1. **Boot:** Dojo reads `dojo.config`, discovers 7 tests (`test_user_register`,
+1. **Boot:** Dojo reads `dojo.config`, discovers 8 tests (`test_user_register`,
    `test_user_lookup`, `test_user_update`, `test_user_deactivate`,
-   `test_image_upload`, `test_media_process`, `test_perform_postgres`), and
+   `test_image_upload`, `test_media_process`, `test_perform_postgres`,
+   `test_health_check`), and
    loads suite-level API configs from `apis/`.
 
 2. **Fixture resolution:** For `test_user_deactivate`, Dojo finds

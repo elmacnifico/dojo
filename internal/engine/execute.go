@@ -95,21 +95,33 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 	}
 
 	var payload []byte
+	var expectStatus int
 	for _, clause := range performLine.Clauses {
-		if strings.ToLower(clause.Key) == "payload" && clause.Value != nil {
-			if filepath.Ext(*clause.Value) != "" {
-				payloadPath := filepath.Join(e.Workspace.BaseDir, suiteName, id, *clause.Value)
-				b, err := os.ReadFile(payloadPath)
-				if err != nil {
-					fallbackPath := filepath.Join(e.Workspace.BaseDir, suiteName, *clause.Value)
-					b, err = os.ReadFile(fallbackPath)
+		switch strings.ToLower(clause.Key) {
+		case "payload":
+			if clause.Value != nil {
+				if filepath.Ext(*clause.Value) != "" {
+					payloadPath := filepath.Join(e.Workspace.BaseDir, suiteName, id, *clause.Value)
+					b, err := os.ReadFile(payloadPath)
 					if err != nil {
-						return fmt.Errorf("failed to read payload %s: %w", payloadPath, err)
+						fallbackPath := filepath.Join(e.Workspace.BaseDir, suiteName, *clause.Value)
+						b, err = os.ReadFile(fallbackPath)
+						if err != nil {
+							return fmt.Errorf("failed to read payload %s: %w", payloadPath, err)
+						}
 					}
+					payload = b
+				} else {
+					payload = []byte(*clause.Value)
 				}
-				payload = b
-			} else {
-				payload = []byte(*clause.Value)
+			}
+		case "expectstatus":
+			if clause.Value != nil {
+				n, err := strconv.Atoi(*clause.Value)
+				if err != nil {
+					return fmt.Errorf("invalid ExpectStatus value %q: must be an integer", *clause.Value)
+				}
+				expectStatus = n
 			}
 		}
 	}
@@ -154,7 +166,7 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 			url = "http://127.0.0.1:8080"
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url+ep.Path, bytes.NewReader(payload))
+		req, err := http.NewRequestWithContext(ctx, ep.HTTPMethod(), url+ep.Path, bytes.NewReader(payload))
 		if err != nil {
 			return fmt.Errorf("failed to create entrypoint request: %w", err)
 		}
@@ -169,7 +181,15 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode >= 400 {
+		if expectStatus != 0 {
+			if resp.StatusCode != expectStatus {
+				return &MismatchError{
+					Reason:   fmt.Sprintf("expected HTTP status %d, got %d", expectStatus, resp.StatusCode),
+					Expected: strconv.Itoa(expectStatus),
+					Actual:   strconv.Itoa(resp.StatusCode),
+				}
+			}
+		} else if resp.StatusCode >= 400 {
 			return fmt.Errorf("entrypoint returned HTTP %d", resp.StatusCode)
 		}
 
