@@ -15,22 +15,55 @@ func TestLoadWorkspace(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	testutil.CreateFile(t, tmpDir, "eval.md", "Global Eval Rule")
-	
-	testutil.CreateFile(t, tmpDir, "tests/dojo.config", `{"concurrency": 40}`)
 	testutil.CreateFile(t, tmpDir, "tests/eval.md", "Suite Eval Rule")
 	
-	testutil.CreateFile(t, tmpDir, "tests/apis/gemini.json", `{"mode": "live", "timeout": "5s", "url": "https://${ENV_API_HOST}", "headers": {"Authorization": "Bearer ${ENV_API_KEY}"}}`)
-	testutil.CreateFile(t, tmpDir, "tests/apis/whatsapp.json", `{"mode": "mock", "timeout": "5s", "url": "/v1/messages", "expected_request": {"file": "whatsapp_req.json"}, "default_response": {"code": 200, "file": "whatsapp_resp.json"}}`)
+	testutil.CreateFile(t, tmpDir, "tests/dojo.yaml", `
+concurrency: 1
+apis:
+  media:
+    mode: mock
+    default_response:
+      code: 200
+      body: "suite-level-fallback"
+  gemini:
+    mode: live
+    timeout: 5s
+    url: "https://${ENV_API_HOST}"
+    headers:
+      Authorization: "Bearer ${ENV_API_KEY}"
+  whatsapp:
+    mode: mock
+    timeout: 5s
+    url: "/v1/messages"
+    expected_request:
+      file: whatsapp_req.json
+    default_response:
+      code: 200
+      file: whatsapp_resp.json
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+`)
 	testutil.CreateFile(t, tmpDir, "tests/whatsapp_req.json", `{"message": "hello"}`)
 	testutil.CreateFile(t, tmpDir, "tests/whatsapp_resp.json", `{"status": "ok"}`)
-	
-	testutil.CreateFile(t, tmpDir, "tests/entrypoints/webhook.json", `{"type": "http", "path": "/trigger"}`)
 	
 	testutil.CreateFile(t, tmpDir, "tests/test_001/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
 Expect -> gemini -> Payload: request.json -> Evaluate Response
 `)
-	testutil.CreateFile(t, tmpDir, "tests/test_001/apis/gemini.json", `{"mode": "mock", "timeout": "10s", "url": "/v1/gemini"}`)
+	testutil.CreateFile(t, tmpDir, "tests/test_001/dojo.yaml", `
+apis:
+  media:
+    mode: mock
+    default_response:
+      code: 200
+      body: "suite-level-fallback"
+  gemini:
+    mode: mock
+    timeout: 10s
+    url: "/v1/gemini"
+`)
 	testutil.CreateFile(t, tmpDir, "tests/test_001/eval.md", "+\nTest Eval Rule")
 	
 	testutil.CreateFile(t, tmpDir, "tests/test_002/test.plan", "Perform -> entrypoints/webhook -> Payload: in.json")
@@ -51,8 +84,8 @@ Expect -> gemini -> Payload: request.json -> Evaluate Response
 		t.Fatalf("Expected tests to be loaded")
 	}
 
-	if len(suite.APIs) != 2 {
-		t.Errorf("Expected 2 suite APIs, got %d", len(suite.APIs))
+	if len(suite.APIs) != 3 {
+		t.Errorf("Expected 3 suite APIs, got %d", len(suite.APIs))
 	}
 	if suite.APIs["gemini"].Timeout != "5s" {
 		t.Errorf("Expected gemini timeout 5s, got %s", suite.APIs["gemini"].Timeout)
@@ -75,8 +108,8 @@ Expect -> gemini -> Payload: request.json -> Evaluate Response
 		t.Fatalf("Expected whatsapp default response")
 	}
 
-	if suite.Config.Concurrency != 40 {
-		t.Errorf("Expected concurrency 40, got %d", suite.Config.Concurrency)
+	if suite.Config.Concurrency != 1 {
+		t.Errorf("Expected concurrency 1, got %d", suite.Config.Concurrency)
 	}
 
 	test, ok := suite.Tests["test_001"]
@@ -108,20 +141,28 @@ Expect -> gemini -> Payload: request.json -> Evaluate Response
 func TestLoadWorkspace_PlanDrivenFixtures(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
-	testutil.CreateFile(t, tmpDir, "suite/apis/gemini.json", `{
-		"mode": "mock",
-		"url": "/v1beta/models/gemini:generateContent"
-	}`)
-	testutil.CreateFile(t, tmpDir, "suite/apis/whatsapp.json", `{
-		"mode": "mock",
-		"url": "/v1/messages",
-		"default_response": {"code": 200, "body": "{\"ok\":true}"}
-	}`)
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", `{
-		"type": "http",
-		"path": "/trigger"
-	}`)
+	testutil.CreateFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+apis:
+  media:
+    mode: mock
+    default_response:
+      code: 200
+      body: "suite-level-fallback"
+  gemini:
+    mode: mock
+    url: "/v1beta/models/gemini:generateContent"
+  whatsapp:
+    mode: mock
+    url: "/v1/messages"
+    default_response:
+      code: 200
+      body: '{"ok":true}'
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+`)
 
 	// test_plan: plan clauses name every fixture explicitly.
 	testutil.CreateFile(t, tmpDir, "suite/test_plan/test.plan", `Perform -> entrypoints/webhook -> Payload: incoming.json
@@ -138,9 +179,17 @@ Expect -> gemini -> Respond: gemini_response.json`)
 	testutil.CreateFile(t, tmpDir, "suite/test_explicit/incoming.json", `{"id":"2"}`)
 	testutil.CreateFile(t, tmpDir, "suite/test_explicit/gemini_response.json", `{"reply":"auto"}`)
 	testutil.CreateFile(t, tmpDir, "suite/test_explicit/custom_req.json", `{"prompt":"explicit"}`)
-	testutil.CreateFile(t, tmpDir, "suite/test_explicit/apis/gemini.json", `{
-		"expected_request": {"file": "custom_req.json"}
-	}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_explicit/dojo.yaml", `
+apis:
+  media:
+    mode: mock
+    default_response:
+      code: 200
+      body: "suite-level-fallback"
+  gemini:
+    expected_request:
+      file: custom_req.json
+`)
 
 	ws, err := workspace.LoadWorkspace(tmpDir)
 	if err != nil {
@@ -189,16 +238,25 @@ func TestLoadWorkspace_DuplicateExpectedRequestAfterWiring(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":2}`)
-	testutil.CreateFile(t, tmpDir, "suite/apis/stripe.json", `{
-		"mode": "mock",
-		"url": "/v1/charge",
-		"default_response": {"code": 200, "body": "{}"}
-	}`)
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", `{
-		"type": "http",
-		"path": "/trigger"
-	}`)
+	testutil.CreateFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 2
+apis:
+  media:
+    mode: mock
+    default_response:
+      code: 200
+      body: "suite-level-fallback"
+  stripe:
+    mode: mock
+    url: "/v1/charge"
+    default_response:
+      code: 200
+      body: "{}"
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+`)
 
 	testutil.CreateFile(t, tmpDir, "suite/test_a/test.plan", `Perform -> entrypoints/webhook
 Expect -> stripe -> Request: stripe_request.json`)
@@ -242,15 +300,28 @@ func TestLoadWorkspace_TestLevelAPIFileResolution(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
-	testutil.CreateFile(t, tmpDir, "suite/apis/media.json", `{
-		"mode": "mock",
-		"default_response": {"code": 200, "body": "suite-level-fallback"}
-	}`)
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", `{
-		"type": "http",
-		"path": "/trigger"
-	}`)
+	testutil.CreateFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+apis:
+  media:
+    mode: mock
+    default_response:
+      code: 200
+      body: "suite-level-fallback"
+  gemini:
+    mode: mock
+    url: "/v1beta/models/gemini:generateContent"
+  whatsapp:
+    mode: mock
+    url: "/v1/messages"
+    default_response:
+      code: 200
+      body: '{"ok":true}'
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+`)
 
 	// Test overrides the media API with a file reference.
 	binaryPayload := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10}
@@ -262,13 +333,14 @@ func TestLoadWorkspace_TestLevelAPIFileResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	testutil.CreateFile(t, tmpDir, "suite/test_img/apis/media.json", `{
-		"default_response": {
-			"code": 200,
-			"file": "photo.jpg",
-			"content_type": "image/jpeg"
-		}
-	}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_img/dojo.yaml", `
+apis:
+  media:
+    default_response:
+      code: 200
+      file: "photo.jpg"
+      content_type: "image/jpeg"
+`)
 	testutil.CreateFile(t, tmpDir, "suite/test_img/test.plan", "Perform -> entrypoints/webhook")
 
 	ws, err := workspace.LoadWorkspace(tmpDir)
@@ -295,19 +367,41 @@ func TestLoadWorkspace_TestLevelEntrypointOverride(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", `{
-		"type": "http",
-		"path": "/trigger",
-		"method": "POST",
-		"headers": {"Content-Type": "application/json", "X-Base": "yes"}
-	}`)
+	testutil.CreateFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+apis:
+  media:
+    mode: mock
+    default_response:
+      code: 200
+      body: "suite-level-fallback"
+  gemini:
+    mode: mock
+    url: "/v1beta/models/gemini:generateContent"
+  whatsapp:
+    mode: mock
+    url: "/v1/messages"
+    default_response:
+      code: 200
+      body: '{"ok":true}'
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+    method: "POST"
+    headers:
+      Content-Type: "application/json"
+      X-Base: "yes"
+`)
 
 	testutil.CreateFile(t, tmpDir, "suite/test_base/test.plan", "Perform -> entrypoints/webhook")
 
-	testutil.CreateFile(t, tmpDir, "suite/test_override/entrypoints/webhook.json", `{
-		"headers": {"X-Sig": "abc123"}
-	}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_override/dojo.yaml", `
+entrypoints:
+  webhook:
+    headers:
+      X-Sig: "abc123"
+`)
 	testutil.CreateFile(t, tmpDir, "suite/test_override/test.plan", "Perform -> entrypoints/webhook")
 
 	ws, err := workspace.LoadWorkspace(tmpDir)
@@ -317,9 +411,9 @@ func TestLoadWorkspace_TestLevelEntrypointOverride(t *testing.T) {
 
 	suite := ws.Suites["suite"]
 
-	// test_base should have no test-level entrypoint overrides.
-	if len(suite.Tests["test_base"].Entrypoints) != 0 {
-		t.Errorf("test_base: expected 0 entrypoint overrides, got %d", len(suite.Tests["test_base"].Entrypoints))
+	// test_base should inherit the suite entrypoint.
+	if len(suite.Tests["test_base"].Entrypoints) != 1 {
+		t.Errorf("test_base: expected 1 entrypoint, got %d", len(suite.Tests["test_base"].Entrypoints))
 	}
 
 	// test_override should deep-merge: retain suite-level path, method,

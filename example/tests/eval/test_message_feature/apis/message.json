@@ -1,5 +1,0 @@
-{
-  "mode": "live",
-  "url": "https://generativelanguage.googleapis.com",
-  "headers": { "x-goog-api-key": "$GEMINI_API_KEY" }
-}

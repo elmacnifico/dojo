@@ -1,0 +1,9 @@
+{
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "You are a routing assistant. Resolve queries for user 99999."
+      }
+    ]
+  }
+}

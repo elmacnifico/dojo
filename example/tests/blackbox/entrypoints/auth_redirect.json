@@ -1,6 +1,0 @@
-{
-  "type": "http",
-  "method": "GET",
-  "path": "/auth?state=abc123",
-  "follow_redirects": false
-}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"reflect"
+	"text/template"
 	"strings"
 
 	"dojo/internal/workspace"
@@ -39,11 +41,21 @@ func effectiveAPIConfig(suite *workspace.Suite, at *ActiveTest, apiName string) 
 	return cfg
 }
 
-func payloadsMatch(cfg workspace.APIConfig, actual, expected []byte) bool {
+func payloadsMatch(cfg workspace.APIConfig, actual, expected []byte, vars map[string]any) bool {
 	proto := workspace.APIProtocolForMatch(cfg)
 	if proto == "postgres" {
+		expectedStr := string(expected)
+		if len(vars) > 0 {
+			tmpl, err := template.New("sql").Parse(expectedStr)
+			if err == nil {
+				var buf bytes.Buffer
+				if err := tmpl.Execute(&buf, vars); err == nil {
+					expectedStr = buf.String()
+				}
+			}
+		}
 		na := workspace.NormalizeSQL(string(actual))
-		ne := workspace.NormalizeSQL(string(expected))
+		ne := workspace.NormalizeSQL(expectedStr)
 		return strings.Contains(na, ne)
 	}
 	return workspace.JSONSubsetMatch(actual, expected)
@@ -60,6 +72,9 @@ type matchHit struct {
 // APIs with ordered expectations, the first unfulfilled expectation whose
 // payload matches is used.
 func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) dojo.MatchResult {
+	e.processRequestMu.Lock()
+	defer e.processRequestMu.Unlock()
+
 	if e.ActiveSuite == nil {
 		return dojo.MatchResult{Err: fmt.Errorf("no active suite")}
 	}
@@ -96,9 +111,10 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) doj
 					continue
 				}
 				if spec.ExpectedRequest == nil || len(spec.ExpectedRequest.Payload) == 0 {
-					continue
+					hits = append(hits, matchHit{test: at, idx: i})
+					return true
 				}
-				if payloadsMatch(eff, reqPayload, spec.ExpectedRequest.Payload) {
+				if payloadsMatch(eff, reqPayload, spec.ExpectedRequest.Payload, at.Variables) {
 					hits = append(hits, matchHit{test: at, idx: i})
 					return true
 				}
@@ -107,13 +123,14 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) doj
 		}
 
 		// Fallback: single ExpectedRequest (backward compat).
-		if eff.ExpectedRequest == nil || len(eff.ExpectedRequest.Payload) == 0 {
-			return true
-		}
 		if exps[0].Fulfilled {
 			return true
 		}
-		if payloadsMatch(eff, reqPayload, eff.ExpectedRequest.Payload) {
+		if eff.ExpectedRequest == nil || len(eff.ExpectedRequest.Payload) == 0 {
+			hits = append(hits, matchHit{test: at, idx: 0})
+			return true
+		}
+		if payloadsMatch(eff, reqPayload, eff.ExpectedRequest.Payload, at.Variables) {
 			hits = append(hits, matchHit{test: at, idx: 0})
 		}
 		return true
@@ -144,11 +161,15 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) doj
 		var override *workspace.APIConfig
 		e.Registry.ForEach(func(_ string, at *ActiveTest) bool {
 			if tcfg, ok := at.Test.APIs[apiName]; ok {
-				if override != nil {
-					override = nil // ambiguous — more than one test overrides
-					return false
+				suiteCfg := suite.APIs[apiName]
+				// Check if this test actually overrides the suite config
+				if !reflect.DeepEqual(tcfg, suiteCfg) {
+					if override != nil {
+						override = nil // ambiguous — more than one test overrides
+						return false
+					}
+					override = &tcfg
 				}
-				override = &tcfg
 			}
 			return true
 		})
@@ -211,6 +232,9 @@ func (e *Engine) ProcessResponse(protocol, matchedID, apiName string, reqPayload
 		return
 	}
 
+	e.processRequestMu.Lock()
+	defer e.processRequestMu.Unlock()
+
 	suite := e.ActiveSuite
 	activeTest, ok := e.Registry.Lookup(matchedID)
 	if !ok {
@@ -238,7 +262,7 @@ func (e *Engine) ProcessResponse(protocol, matchedID, apiName string, reqPayload
 				if len(eff.OrderedExpectations) > idx {
 					spec := eff.OrderedExpectations[idx]
 					if spec.ExpectedRequest != nil && len(spec.ExpectedRequest.Payload) > 0 {
-						if !payloadsMatch(eff, reqPayload, spec.ExpectedRequest.Payload) {
+						if !payloadsMatch(eff, reqPayload, spec.ExpectedRequest.Payload, activeTest.Variables) {
 							continue
 						}
 					}

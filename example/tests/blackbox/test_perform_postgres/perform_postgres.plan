@@ -1,10 +1,10 @@
-Perform -> entrypoints/webhook -> Payload: incoming.json
+Perform -> POST /trigger -> Payload: incoming.json
 
 Expect -> postgres -> Request: postgres_request.sql
 Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.json
 Expect -> whatsapp -> Request: whatsapp_request.json
 
-Perform -> postgres -> Query: check_row.sql -> Expect: "1"
-Perform -> postgres -> Query: check_display.sql -> Expect: expected.json
-Perform -> postgres -> Query: ping.sql
-Perform -> postgres -> Query: check_gone.sql -> Expect: "0"
+Perform -> postgres -> check_row.sql -> "1"
+Perform -> postgres -> check_display.sql -> expected.json
+Perform -> postgres -> ping.sql
+Perform -> postgres -> check_gone.sql -> "0"

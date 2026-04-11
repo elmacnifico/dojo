@@ -13,7 +13,7 @@ var (
 		{Name: "Arrow", Pattern: `->`},
 		{Name: "Colon", Pattern: `:`},
 		{Name: "String", Pattern: `"(?:[^"\\]|\\.)*"`},
-		{Name: "Ident", Pattern: `[a-zA-Z_][a-zA-Z0-9_./-]*`},
+		{Name: "Ident", Pattern: `[a-zA-Z0-9_./-]+`},
 		{Name: "Whitespace", Pattern: `[ \t]+`},
 		{Name: "Newline", Pattern: `[\n\r]+`},
 	})
@@ -33,13 +33,13 @@ type Document struct {
 // a bare Expect -> name registers the expectation without constraints.
 type Line struct {
 	Action  string    `parser:"@Ident Arrow"`
-	Target  string    `parser:"@Ident"`
+	TargetParts []string `parser:"@Ident+"`
 	Clauses []*Clause `parser:"(Arrow @@ (Arrow @@)*)?"`
 }
 
 // Clause represents key-value pairs (e.g., Payload: file.json).
 type Clause struct {
-	KeyParts []string `parser:"@Ident+"`
+	KeyParts []string `parser:"(@Ident | @String)+"`
 	RawValue *string  `parser:"(Colon (@String | @Ident))?"`
 }
 
@@ -77,11 +77,15 @@ func ParsePlan(planText string) (*ParsedDocument, error) {
 	for _, l := range doc.Lines {
 		pl := ParsedLine{
 			Action: l.Action,
-			Target: l.Target,
+			Target: strings.Join(l.TargetParts, " "),
 		}
 		for _, c := range l.Clauses {
+			key := c.Key()
+			if strings.HasPrefix(key, `"`) && strings.HasSuffix(key, `"`) {
+				key = key[1 : len(key)-1]
+			}
 			pc := ParsedClause{
-				Key: c.Key(),
+				Key: key,
 			}
 			if c.RawValue != nil {
 				val := *c.RawValue

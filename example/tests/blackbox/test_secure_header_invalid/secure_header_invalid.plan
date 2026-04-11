@@ -1,1 +1,1 @@
-Perform -> entrypoints/secure -> ExpectStatus: "401"
+Perform -> GET /secure -> Header: "X-Api-Key: wrong_key" -> Status: 401

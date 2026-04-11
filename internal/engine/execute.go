@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"text/template"
 	"fmt"
 	"io"
 	"net/http"
@@ -106,7 +107,7 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 	}
 
 	// Subsequent phases: inline assertions (e.g. Perform -> postgres).
-	if err := e.executeSubsequentPhases(ctx, id, suiteName, phases[1:], livePGURL); err != nil {
+	if err := e.executeSubsequentPhases(ctx, active, id, suiteName, phases[1:], livePGURL); err != nil {
 		return err
 	}
 
@@ -115,45 +116,103 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 
 func (e *Engine) prepareEntrypoint(ctx context.Context, id string, test *workspace.Test, suite *workspace.Suite, suiteName string, phase planPhase) (*ActiveTest, workspace.EntrypointConfig, []byte, int, error) {
 	performLine := phase.perform
-	epName := strings.TrimPrefix(performLine.Target, "entrypoints/")
-	ep, ok := suite.Entrypoints[epName]
-	if !ok {
-		return nil, ep, nil, 0, fmt.Errorf("entrypoint '%s' not found", epName)
+	target := performLine.Target
+	
+	var ep workspace.EntrypointConfig
+	
+	// Check if it's an inline HTTP trigger (e.g., "POST /users")
+	parts := strings.SplitN(target, " ", 2)
+	isHTTPMethod := false
+	if len(parts) == 2 {
+		method := strings.ToUpper(parts[0])
+		switch method {
+		case "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS":
+			isHTTPMethod = true
+			ep = workspace.EntrypointConfig{
+				Type:   "http",
+				Method: method,
+				Path:   parts[1],
+			}
+		}
 	}
-	if testEP, ok := test.Entrypoints[epName]; ok {
-		ep = testEP
+	
+	if !isHTTPMethod {
+		epName := strings.TrimPrefix(target, "entrypoints/")
+		var ok bool
+		ep, ok = suite.Entrypoints[epName]
+		if !ok {
+			return nil, ep, nil, 0, fmt.Errorf("entrypoint '%s' not found", epName)
+		}
+		if testEP, ok := test.Entrypoints[epName]; ok {
+			ep = testEP
+		}
 	}
 
 	var payload []byte
 	var expectStatus int
+	var withJSON []byte
+	var hasPayloadClause bool
+
 	for _, clause := range performLine.Clauses {
 		switch strings.ToLower(clause.Key) {
 		case "payload":
+			hasPayloadClause = true
 			if clause.Value != nil {
 				if filepath.Ext(*clause.Value) != "" {
-					payloadPath := filepath.Join(e.Workspace.BaseDir, suiteName, id, *clause.Value)
-					b, err := os.ReadFile(payloadPath)
+					b, err := workspace.ResolveFile(*clause.Value, filepath.Join(e.Workspace.BaseDir, suiteName, id), filepath.Join(e.Workspace.BaseDir, suiteName))
 					if err != nil {
-						fallbackPath := filepath.Join(e.Workspace.BaseDir, suiteName, *clause.Value)
-						b, err = os.ReadFile(fallbackPath)
-						if err != nil {
-							return nil, ep, nil, 0, fmt.Errorf("failed to read payload %s: %w", payloadPath, err)
-						}
+						return nil, ep, nil, 0, fmt.Errorf("failed to read payload %s: %w", *clause.Value, err)
 					}
 					payload = b
 				} else {
 					payload = []byte(*clause.Value)
 				}
 			}
-		case "expectstatus":
+		case "with":
+			if clause.Value != nil {
+				withJSON = []byte(*clause.Value)
+			}
+		case "status", "expectstatus":
 			if clause.Value != nil {
 				n, err := strconv.Atoi(*clause.Value)
 				if err != nil {
-					return nil, ep, nil, 0, fmt.Errorf("invalid ExpectStatus value %q: must be an integer", *clause.Value)
+					return nil, ep, nil, 0, fmt.Errorf("invalid Status value %q: must be an integer", *clause.Value)
 				}
 				expectStatus = n
 			}
+		case "header":
+			if clause.Value != nil {
+				if ep.Headers == nil {
+					ep.Headers = make(map[string]string)
+				}
+				parts := strings.SplitN(*clause.Value, ":", 2)
+				if len(parts) == 2 {
+					ep.Headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+				}
+			}
 		}
+	}
+
+	if !hasPayloadClause && !isHTTPMethod {
+		epName := strings.TrimPrefix(target, "entrypoints/")
+		implicitFile := epName + ".json"
+		b, err := workspace.ResolveFile(implicitFile, filepath.Join(e.Workspace.BaseDir, suiteName, id), filepath.Join(e.Workspace.BaseDir, suiteName))
+		if err == nil {
+			payload = b
+		} else if len(withJSON) > 0 {
+			return nil, ep, nil, 0, fmt.Errorf("With: clause requires a base payload, but %s was not found", implicitFile)
+		}
+	}
+
+	if len(withJSON) > 0 {
+		if len(payload) == 0 {
+			return nil, ep, nil, 0, fmt.Errorf("With: clause requires a base payload")
+		}
+		merged, err := workspace.DeepMergeJSON(payload, withJSON)
+		if err != nil {
+			return nil, ep, nil, 0, fmt.Errorf("failed to merge With: JSON: %w", err)
+		}
+		payload = merged
 	}
 
 	active := &ActiveTest{
@@ -162,7 +221,15 @@ func (e *Engine) prepareEntrypoint(ctx context.Context, id string, test *workspa
 		Suite:        suite,
 		Ctx:          ctx,
 		Expectations: make(map[string][]*Expectation),
+		Variables:    make(map[string]any),
 		done:         make(chan struct{}),
+	}
+	
+	if len(payload) > 0 {
+		var vars map[string]any
+		if err := json.Unmarshal(payload, &vars); err == nil {
+			active.Variables = vars
+		}
 	}
 
 	expIdx := make(map[string]int)
@@ -278,7 +345,10 @@ func (e *Engine) triggerEntrypoint(ctx context.Context, suite *workspace.Suite, 
 	case "http":
 		url := ep.URL
 		if url == "" {
+			url = suite.Config.SutBaseURL
+		if url == "" {
 			url = "http://127.0.0.1:8080"
+		}
 		}
 
 		req, err := http.NewRequestWithContext(ctx, ep.HTTPMethod(), url+ep.Path, bytes.NewReader(payload))
@@ -389,11 +459,11 @@ func (e *Engine) awaitPhaseExpectations(ctx context.Context, active *ActiveTest)
 	return nil
 }
 
-func (e *Engine) executeSubsequentPhases(ctx context.Context, id, suiteName string, phases []planPhase, livePGURL string) error {
+func (e *Engine) executeSubsequentPhases(ctx context.Context, active *ActiveTest, id, suiteName string, phases []planPhase, livePGURL string) error {
 	testDir := filepath.Join(e.Workspace.BaseDir, suiteName, id)
 	suiteDir := filepath.Join(e.Workspace.BaseDir, suiteName)
 	for _, ph := range phases {
-		if err := e.executePostgresPerform(ctx, ph.perform, testDir, suiteDir, livePGURL); err != nil {
+		if err := e.executePostgresPerform(ctx, active, ph.perform, testDir, suiteDir, livePGURL); err != nil {
 			return err
 		}
 	}
@@ -405,10 +475,19 @@ func (e *Engine) executeSubsequentPhases(ctx context.Context, id, suiteName stri
 //   - No Expect:       query must not error (OK)
 //   - Expect: "N":     query must return exactly N rows
 //   - Expect: file.json: result rows compared via JSONSubsetMatch
-func (e *Engine) executePostgresPerform(ctx context.Context, line workspace.ParsedLine, testDir, suiteDir, pgURL string) error {
+func (e *Engine) executePostgresPerform(ctx context.Context, active *ActiveTest, line workspace.ParsedLine, testDir, suiteDir, pgURL string) error {
 	var queryFile, expectValue string
+	positionalCount := 0
+
 	for _, c := range line.Clauses {
 		if c.Value == nil {
+			// Positional argument
+			if positionalCount == 0 {
+				queryFile = c.Key
+			} else if positionalCount == 1 {
+				expectValue = c.Key
+			}
+			positionalCount++
 			continue
 		}
 		switch strings.ToLower(c.Key) {
@@ -428,13 +507,24 @@ func (e *Engine) executePostgresPerform(ctx context.Context, line workspace.Pars
 		return fmt.Errorf("failed to read query fixture %s: %w", queryFile, err)
 	}
 
+	queryStr := string(querySQL)
+	if active != nil && len(active.Variables) > 0 {
+		tmpl, err := template.New("sql").Parse(queryStr)
+		if err == nil {
+			var buf bytes.Buffer
+			if err := tmpl.Execute(&buf, active.Variables); err == nil {
+				queryStr = buf.String()
+			}
+		}
+	}
+
 	db, err := sql.Open("postgres", pgURL)
 	if err != nil {
 		return fmt.Errorf("postgres connect failed: %w", err)
 	}
 	defer db.Close()
 
-	rows, err := db.QueryContext(ctx, string(querySQL))
+	rows, err := db.QueryContext(ctx, queryStr)
 	if err != nil {
 		return fmt.Errorf("postgres query failed: %w", err)
 	}
@@ -582,7 +672,7 @@ func (e *Engine) Evaluate(activeTest *ActiveTest, payload []byte) error {
 
 	cfg := activeTest.Suite.Config.Evaluator
 	if cfg == nil {
-		return fmt.Errorf("evaluator config missing in dojo.config")
+		return fmt.Errorf("evaluator config missing in dojo.yaml")
 	}
 
 	evaluator, err := NewAIEvaluator(cfg, "You are a strict test evaluator. Decide whether the ACTUAL PAYLOAD satisfies every rule in EXPECTED RULE.\n\nEXPECTED RULE:\n{{.ExpectedRule}}\n\nACTUAL PAYLOAD:\n{{.ActualPayload}}\n\nRespond with ONLY a JSON object in this exact format (no markdown, no extra text):\n{\"pass\": true, \"reason\": \"short explanation\"}\nSet \"pass\" to true if ALL rules are satisfied, false otherwise. Always include a \"reason\".")

@@ -1,0 +1,32 @@
+concurrency: 4
+sut_command: "go run ../../sut/main.go"
+timeouts:
+  perform: 5s
+  expect: 2s
+
+apis:
+  gemini:
+    mode: mock
+    url: "/v1beta/models/gemini-2.5-flash:generateContent"
+  media:
+    mode: mock
+    default_response:
+      code: 200
+      body: "{}"
+  postgres:
+    mode: live
+    protocol: postgres
+    url: "postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable"
+  whatsapp:
+    mode: mock
+    url: "/v1/messages"
+    default_response:
+      code: 200
+      body: '{"messaging_product":"whatsapp","messages":[{"id":"wamid.test"}]}'
+
+entrypoints:
+  auth_redirect:
+    type: http
+    method: GET
+    path: "/auth?state=abc123"
+    follow_redirects: false

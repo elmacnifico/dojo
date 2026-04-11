@@ -1,1 +1,1 @@
-Perform -> entrypoints/health -> ExpectStatus: "200"
+Perform -> GET /health -> ExpectStatus: "200"

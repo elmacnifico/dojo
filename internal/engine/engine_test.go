@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func TestEngineExecution(t *testing.T) {
 	sutServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/trigger" {
 			body, _ := io.ReadAll(r.Body)
-			
+
 			stripeURL := os.Getenv("API_STRIPE_URL")
 			if stripeURL != "" {
 				client := &http.Client{Timeout: 2 * time.Second}
@@ -46,29 +47,33 @@ func TestEngineExecution(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "test_suite/apis/stripe.json", `{
-		"mode": "mock",
-		"timeout": "5s",
-		"url": "/v1/charge",
-		"expected_request": {
-			"body": "{\"order_id\": \"ord_123\"}"
-		},
-		"default_response": {
-			"code": 200,
-			"body": "{\"status\": \"success\"}"
-		}
-	}`)
-	
-	testutil.CreateFile(t, tmpDir, "test_suite/dojo.config", `{"concurrency": 2}`)
-	
-	testutil.CreateFile(t, tmpDir, "test_suite/entrypoints/webhook.json", `{
-		"type": "http",
-		"path": "/trigger",
-		"url": "`+sutServer.URL+`",
-		"expected_response": {
-			"body": "{\"status\": \"ok\"}"
-		}
-	}`)
+	testutil.AppendFile(t, tmpDir, "test_suite/dojo.yaml", `
+apis:
+  stripe:
+    mode: mock
+    timeout: 5s
+    url: /v1/charge
+    expected_request:
+      body: '{"order_id": "ord_123"}'
+    default_response:
+      code: 200
+      body: '{"status": "success"}'
+`)
+
+	testutil.AppendFile(t, tmpDir, "test_suite/dojo.yaml", `
+concurrency: 2
+`)
+	testutil.AppendFile(t, tmpDir, "test_suite/dojo.yaml", "\nsut_base_url: \""+sutServer.URL+"\"\n")
+
+	testutil.AppendFile(t, tmpDir, "test_suite/dojo.yaml", `
+entrypoints:
+  webhook:
+    type: http
+    path: /trigger
+    url: '`+sutServer.URL+`'
+    expected_response:
+      body: '{"status": "ok"}'
+`)
 
 	testutil.CreateFile(t, tmpDir, "test_suite/test_001/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
@@ -82,7 +87,6 @@ Expect -> stripe -> Payload: ""
 	}
 
 	eng := engine.NewEngine(ws)
-
 
 	if _, err := eng.StartProxies(context.Background(), "test_suite"); err != nil {
 		t.Fatalf("Failed to start proxies: %v", err)
@@ -148,28 +152,32 @@ func TestEngineLiveHTTPExpectedResponse(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "test_suite/apis/stripe.json", `{
-		"mode": "live",
-		"timeout": "5s",
-		"url": "`+upstream.URL+`",
-		"expected_request": {
-			"body": "{\"order_id\": \"ord_123\"}"
-		},
-		"expected_response": {
-			"body": "live-marker-xyz"
-		}
-	}`)
+	testutil.AppendFile(t, tmpDir, "test_suite/dojo.yaml", `
+apis:
+  stripe:
+    mode: live
+    timeout: 5s
+    url: '`+upstream.URL+`'
+    expected_request:
+      body: '{"order_id": "ord_123"}'
+    expected_response:
+      body: live-marker-xyz
+`)
 
-	testutil.CreateFile(t, tmpDir, "test_suite/dojo.config", `{"concurrency": 2}`)
+	testutil.AppendFile(t, tmpDir, "test_suite/dojo.yaml", `
+concurrency: 2
+`)
+	testutil.AppendFile(t, tmpDir, "test_suite/dojo.yaml", "\nsut_base_url: \""+sutServer.URL+"\"\n")
 
-	testutil.CreateFile(t, tmpDir, "test_suite/entrypoints/webhook.json", `{
-		"type": "http",
-		"path": "/trigger",
-		"url": "`+sutServer.URL+`",
-		"expected_response": {
-			"body": "{\"status\": \"ok\"}"
-		}
-	}`)
+	testutil.AppendFile(t, tmpDir, "test_suite/dojo.yaml", `
+entrypoints:
+  webhook:
+    type: http
+    path: /trigger
+    url: '`+sutServer.URL+`'
+    expected_response:
+      body: '{"status": "ok"}'
+`)
 
 	testutil.CreateFile(t, tmpDir, "test_suite/test_001/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
@@ -183,7 +191,6 @@ Expect -> stripe -> Payload: ""
 	}
 
 	eng := engine.NewEngine(ws)
-
 
 	if _, err := eng.StartProxies(context.Background(), "test_suite"); err != nil {
 		t.Fatalf("Failed to start proxies: %v", err)
@@ -249,20 +256,31 @@ func TestRegistryCleanupAfterTest(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "test_suite/apis/stripe.json", `{
-		"mode": "mock",
-		"timeout": "5s",
-		"url": "/v1/charge",
-		"expected_request": {"body": "{\"order_id\": \"ord_cleanup\"}"},
-		"default_response": {"code": 200, "body": "{\"status\": \"success\"}"}
-	}`)
-	testutil.CreateFile(t, tmpDir, "test_suite/dojo.config", `{"concurrency": 1}`)
-	testutil.CreateFile(t, tmpDir, "test_suite/entrypoints/webhook.json", `{
-		"type": "http",
-		"path": "/trigger",
-		"url": "`+sutServer.URL+`",
-		"expected_response": {"body": "{\"status\": \"ok\"}"}
-	}`)
+	testutil.AppendFile(t, tmpDir, "test_suite/dojo.yaml", `
+apis:
+  stripe:
+    mode: mock
+    timeout: 5s
+    url: /v1/charge
+    expected_request:
+      body: '{"order_id": "ord_cleanup"}'
+    default_response:
+      code: 200
+      body: '{"status": "success"}'
+`)
+	testutil.AppendFile(t, tmpDir, "test_suite/dojo.yaml", `
+concurrency: 1
+`)
+	testutil.AppendFile(t, tmpDir, "test_suite/dojo.yaml", "\nsut_base_url: \""+sutServer.URL+"\"\n")
+	testutil.AppendFile(t, tmpDir, "test_suite/dojo.yaml", `
+entrypoints:
+  webhook:
+    type: http
+    path: /trigger
+    url: '`+sutServer.URL+`'
+    expected_response:
+      body: '{"status": "ok"}'
+`)
 	testutil.CreateFile(t, tmpDir, "test_suite/test_001/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
 Expect -> stripe -> Payload: ""
@@ -275,7 +293,6 @@ Expect -> stripe -> Payload: ""
 	}
 
 	eng := engine.NewEngine(ws)
-
 
 	if _, err := eng.StartProxies(context.Background(), "test_suite"); err != nil {
 		t.Fatalf("start proxies: %v", err)
@@ -512,6 +529,65 @@ func TestProcessRequest_OrderedMultiExpectations(t *testing.T) {
 	}
 }
 
+// Two ordered expectations may share the same subset-matching request body; concurrent
+// outbound calls must still fulfill exactly one slot each (engine serializes ProcessRequest).
+func TestProcessRequest_ConcurrentSamePayloadOrderedExpects(t *testing.T) {
+	t.Parallel()
+	const iters = 150
+	body := []byte(`{"dup":true}`)
+	for n := range iters {
+		suite := &workspace.Suite{
+			APIs: map[string]workspace.APIConfig{
+				"gemini": {Mode: "mock", URL: "/v1/generate",
+					OrderedExpectations: []workspace.ExpectationSpec{
+						{
+							ExpectedRequest: &workspace.PayloadSpec{Payload: body},
+							Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"slot":1}`)},
+						},
+						{
+							ExpectedRequest: &workspace.PayloadSpec{Payload: body},
+							Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"slot":2}`)},
+						},
+					},
+				},
+			},
+		}
+		active := &engine.ActiveTest{
+			ID:    "test_dup",
+			Suite: suite,
+			Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+			Expectations: map[string][]*engine.Expectation{
+				"gemini": {{Target: "gemini", Index: 0}, {Target: "gemini", Index: 1}},
+			},
+		}
+		eng := engine.NewEngine(&workspace.Workspace{})
+		eng.ActiveSuite = suite
+		eng.Registry.Register("test_dup", active)
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = eng.ProcessRequest("http", "gemini", body)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = eng.ProcessRequest("http", "gemini", body)
+		}()
+		wg.Wait()
+
+		if !active.Expectations["gemini"][0].Fulfilled || !active.Expectations["gemini"][1].Fulfilled {
+			t.Fatalf("iter %d: want both expectations fulfilled", n)
+		}
+		if active.Expectations["gemini"][0].Error != nil {
+			t.Fatalf("iter %d: exp0 error: %v", n, active.Expectations["gemini"][0].Error)
+		}
+		if active.Expectations["gemini"][1].Error != nil {
+			t.Fatalf("iter %d: exp1 error: %v", n, active.Expectations["gemini"][1].Error)
+		}
+	}
+}
+
 func TestProcessRequest_MockCodeDefaultsTo200(t *testing.T) {
 	t.Parallel()
 	suite := &workspace.Suite{
@@ -565,8 +641,8 @@ func TestProcessResponse_HTTPLiveMatch(t *testing.T) {
 		},
 	}
 	active := &engine.ActiveTest{
-		ID:   "t1",
-		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		ID:    "t1",
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
 		Expectations: map[string][]*engine.Expectation{
 			"ext": {{Target: "ext"}},
@@ -592,8 +668,8 @@ func TestProcessResponse_HTTPLiveMismatch(t *testing.T) {
 		},
 	}
 	active := &engine.ActiveTest{
-		ID:   "t1",
-		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		ID:    "t1",
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
 		Expectations: map[string][]*engine.Expectation{
 			"ext": {{Target: "ext"}},
@@ -623,8 +699,8 @@ func TestProcessResponse_HTTPMockSkipped(t *testing.T) {
 		},
 	}
 	active := &engine.ActiveTest{
-		ID:   "t1",
-		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		ID:    "t1",
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
 		Expectations: map[string][]*engine.Expectation{
 			"mockapi": {{Target: "mockapi"}},
@@ -650,8 +726,8 @@ func TestProcessResponse_PostgresExpectedResponseMatch(t *testing.T) {
 		},
 	}
 	active := &engine.ActiveTest{
-		ID:   "t1",
-		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		ID:    "t1",
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
 		Expectations: map[string][]*engine.Expectation{
 			"pgdb": {{Target: "pgdb"}},
@@ -679,8 +755,8 @@ func TestProcessResponse_PostgresNoExpectedResponse(t *testing.T) {
 		},
 	}
 	active := &engine.ActiveTest{
-		ID:   "t1",
-		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		ID:    "t1",
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
 		Expectations: map[string][]*engine.Expectation{
 			"pgdb": {{Target: "pgdb"}},
@@ -745,8 +821,8 @@ func TestProcessResponse_PostgresErrorResponse(t *testing.T) {
 		},
 	}
 	active := &engine.ActiveTest{
-		ID:   "t1",
-		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		ID:    "t1",
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
 		Expectations: map[string][]*engine.Expectation{
 			"pgdb": {{Target: "pgdb"}},
@@ -777,8 +853,8 @@ func TestProcessResponse_PostgresMismatch(t *testing.T) {
 		},
 	}
 	active := &engine.ActiveTest{
-		ID:   "t1",
-		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		ID:    "t1",
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
 		Expectations: map[string][]*engine.Expectation{
 			"pgdb": {{Target: "pgdb"}},
@@ -810,8 +886,8 @@ func TestProcessResponse_PostgresTestOverride(t *testing.T) {
 		},
 	}
 	active := &engine.ActiveTest{
-		ID:   "t1",
-		Test: &workspace.Test{APIs: testAPIs},
+		ID:    "t1",
+		Test:  &workspace.Test{APIs: testAPIs},
 		Suite: suite,
 		Expectations: map[string][]*engine.Expectation{
 			"pgdb": {{Target: "pgdb"}},
@@ -851,26 +927,41 @@ func TestEngineImplicitCorrelation(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
-	testutil.CreateFile(t, tmpDir, "suite/apis/notify.json", `{
-		"mode": "mock",
-		"url": "/v1/send",
-		"default_response": {"code": 200, "body": "{\"ok\":true}"}
-	}`)
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", fmt.Sprintf(`{
-		"type": "http",
-		"path": "/trigger",
-		"url": "%s"
-	}`, sutServer.URL))
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", "\nsut_base_url: \""+sutServer.URL+"\"\n")
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+apis:
+  notify:
+    mode: mock
+    url: /v1/send
+    default_response:
+      code: 200
+      body: '{"ok":true}'
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", fmt.Sprintf(`
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+    expected_response:
+      body: '{"status":"ok"}'
+    url: "%s"
+
+`, sutServer.URL))
 
 	testutil.CreateFile(t, tmpDir, "suite/test_correlate/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
 Expect -> notify
 `)
 	testutil.CreateFile(t, tmpDir, "suite/test_correlate/incoming.json", `{"order_id":"ord_100"}`)
-	testutil.CreateFile(t, tmpDir, "suite/test_correlate/apis/notify.json", `{
-		"expected_request": {"body": "{\"customer\":\"cust_42\",\"message\":\"done\"}"}
-	}`)
+	testutil.AppendFile(t, tmpDir, "suite/test_correlate/dojo.yaml", `
+apis:
+  notify:
+    expected_request:
+      body: '{"customer":"cust_42","message":"done"}'
+`)
 
 	ws, err := workspace.LoadWorkspace(tmpDir)
 	if err != nil {
@@ -878,7 +969,6 @@ Expect -> notify
 	}
 
 	eng := engine.NewEngine(ws)
-
 
 	if _, err := eng.StartProxies(context.Background(), "suite"); err != nil {
 		t.Fatalf("StartProxies: %v", err)
@@ -985,8 +1075,8 @@ func TestProcessRequest_LiveHTTPEvalDefersToResponse(t *testing.T) {
 		},
 	}
 	active := &engine.ActiveTest{
-		ID:   "t1",
-		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		ID:    "t1",
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
 		Expectations: map[string][]*engine.Expectation{
 			"gemini": {{Target: "gemini", RequiresEval: true}},
@@ -1020,8 +1110,8 @@ func TestProcessResponse_HTTPLiveEvalFailsWithoutConfig(t *testing.T) {
 		},
 	}
 	active := &engine.ActiveTest{
-		ID:   "t1",
-		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		ID:    "t1",
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
 		Suite: suite,
 		Expectations: map[string][]*engine.Expectation{
 			"gemini": {{Target: "gemini", RequiresEval: true}},
@@ -1107,17 +1197,25 @@ func TestBinaryFixturePayload(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/upload.json", fmt.Sprintf(`{
-		"type": "http",
-		"path": "/upload",
-		"url": %q
-	}`, sutServer.URL))
-	testutil.CreateFile(t, tmpDir, "suite/apis/vision.json", `{
-		"mode": "mock",
-		"url": "/v1/analyze",
-		"default_response": {"code": 200, "body": "{\"label\":\"cat\"}"}
-	}`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", "\nsut_base_url: \""+sutServer.URL+"\"\n")
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+entrypoints:
+  upload:
+    type: http
+    path: "/upload"
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+apis:
+  vision:
+    mode: mock
+    url: /v1/analyze
+    default_response:
+      code: 200
+      body: '{"label":"cat"}'
+`)
 
 	// Write the binary JPEG fixture.
 	jpegPath := filepath.Join(tmpDir, "suite", "test_image", "image.jpg")
@@ -1142,7 +1240,6 @@ Expect -> vision -> Request: vision_request.json
 	}
 
 	eng := engine.NewEngine(ws)
-
 
 	if _, err := eng.StartProxies(context.Background(), "suite"); err != nil {
 		t.Fatalf("StartProxies: %v", err)
@@ -1176,17 +1273,26 @@ func TestUnsupportedEntrypointType(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/queue.json", `{
-		"type": "amqp",
-		"path": "/messages"
-	}`)
-	testutil.CreateFile(t, tmpDir, "suite/apis/payments.json", `{
-		"mode": "mock",
-		"url": "/v1/pay",
-		"expected_request": {"body": "{}"},
-		"default_response": {"code": 200, "body": "{}"}
-	}`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+entrypoints:
+  queue:
+    type: amqp
+    path: /messages
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+apis:
+  payments:
+    mode: mock
+    url: /v1/pay
+    expected_request:
+      body: '{}'
+    default_response:
+      code: 200
+      body: '{}'
+`)
 	testutil.CreateFile(t, tmpDir, "suite/test_msg/test.plan", "Perform -> entrypoints/queue\nExpect -> payments")
 
 	_, err := workspace.LoadWorkspace(tmpDir)
@@ -1202,11 +1308,13 @@ func TestSUTCrashPropagatesMidTest(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", fmt.Sprintf(`{
-		"concurrency": 1,
-		"sut_command": "go run ./sut.go",
-		"timeouts": {"sut_startup": "10s", "perform": "2s"}
-	}`))
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+sut_command: "go run ./sut.go"
+timeouts:
+  sut_startup: 10s
+  perform: 2s
+`)
 
 	// SUT that listens on :18923, responds once, then crashes.
 	testutil.CreateFile(t, tmpDir, "suite/sut.go", `package main
@@ -1232,17 +1340,24 @@ func main() {
 }
 `)
 
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", `{
-		"type": "http",
-		"path": "/trigger",
-		"url": "http://127.0.0.1:18923"
-	}`)
-	testutil.CreateFile(t, tmpDir, "suite/apis/external.json", `{
-		"mode": "mock",
-		"url": "/v1/call",
-		"expected_request": {"body": "{\"will_never_arrive\":true}"},
-		"default_response": {"code": 200, "body": "{}"}
-	}`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+entrypoints:
+  webhook:
+    type: http
+    path: /trigger
+    url: http://127.0.0.1:18923
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+apis:
+  external:
+    mode: mock
+    url: /v1/call
+    expected_request:
+      body: '{"will_never_arrive":true}'
+    default_response:
+      code: 200
+      body: '{}'
+`)
 	testutil.CreateFile(t, tmpDir, "suite/test_crash/test.plan", "Perform -> entrypoints/webhook\nExpect -> external")
 
 	ws, err := workspace.LoadWorkspace(tmpDir)
@@ -1291,13 +1406,20 @@ func TestMismatchErrorPopulatesStructuredFields(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", fmt.Sprintf(`{
-		"type": "http",
-		"path": "/",
-		"url": %q,
-		"expected_response": {"body": "{\"expected\":\"match\"}"}
-	}`, sutServer.URL))
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", "\nsut_base_url: \""+sutServer.URL+"\"\n")
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", fmt.Sprintf(`
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+    expected_response:
+      body: '{"expected":"value"}'
+    url: "%s"
+
+`, sutServer.URL))
 	testutil.CreateFile(t, tmpDir, "suite/test_mismatch/test.plan", "Perform -> entrypoints/webhook")
 
 	ws, err := workspace.LoadWorkspace(tmpDir)
@@ -1369,16 +1491,28 @@ func TestEnvVarExpansionInMockResponse(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
-	testutil.CreateFile(t, tmpDir, "suite/apis/media.json", `{
-		"mode": "mock",
-		"default_response": {"code": 200, "body": "{\"url\": \"$API_MEDIA_URL/download/file.jpg\"}"}
-	}`)
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", fmt.Sprintf(`{
-		"type": "http",
-		"path": "/trigger",
-		"url": %q
-	}`, sutServer.URL))
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", "\nsut_base_url: \""+sutServer.URL+"\"\n")
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+apis:
+  media:
+    mode: mock
+    default_response:
+      code: 200
+      body: '{"url": "$API_MEDIA_URL/download/file.jpg"}'
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", fmt.Sprintf(`
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+    expected_response:
+      body: '{"status":"ok"}'
+    url: "%s"
+
+`, sutServer.URL))
 	testutil.CreateFile(t, tmpDir, "suite/test_expand/test.plan", "Perform -> entrypoints/webhook -> Payload: incoming.json")
 	testutil.CreateFile(t, tmpDir, "suite/test_expand/incoming.json", `{}`)
 
@@ -1435,20 +1569,29 @@ func TestMockResponseContentType(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
-	testutil.CreateFile(t, tmpDir, "suite/apis/media.json", `{
-		"mode": "mock",
-		"default_response": {
-			"code": 200,
-			"body": "binary-image-data",
-			"content_type": "image/jpeg"
-		}
-	}`)
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", fmt.Sprintf(`{
-		"type": "http",
-		"path": "/trigger",
-		"url": %q
-	}`, sutServer.URL))
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", "\nsut_base_url: \""+sutServer.URL+"\"\n")
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+apis:
+  media:
+    mode: mock
+    default_response:
+      code: 200
+      body: binary-image-data
+      content_type: image/jpeg
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", fmt.Sprintf(`
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+    expected_response:
+      body: '{"status":"ok"}'
+    url: "%s"
+
+`, sutServer.URL))
 	testutil.CreateFile(t, tmpDir, "suite/test_ct/test.plan", "Perform -> entrypoints/webhook -> Payload: incoming.json")
 	testutil.CreateFile(t, tmpDir, "suite/test_ct/incoming.json", `{}`)
 
@@ -1500,16 +1643,22 @@ func TestExpectStatus(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/health.json", fmt.Sprintf(`{
-		"type": "http", "path": "/health", "url": %q
-	}`, sutServer.URL))
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/forbidden.json", fmt.Sprintf(`{
-		"type": "http", "path": "/forbidden", "url": %q
-	}`, sutServer.URL))
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/teapot.json", fmt.Sprintf(`{
-		"type": "http", "path": "/teapot", "url": %q
-	}`, sutServer.URL))
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", "\nsut_base_url: \""+sutServer.URL+"\"\n")
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+entrypoints:
+  health:
+    type: http
+    path: "/health"
+  forbidden:
+    type: http
+    path: "/forbidden"
+  teapot:
+    type: http
+    path: "/teapot"
+`)
 
 	// test_ok: 200 matches 200 -> pass
 	testutil.CreateFile(t, tmpDir, "suite/test_ok/test.plan",
@@ -1576,13 +1725,20 @@ func TestFollowRedirects(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", "\nsut_base_url: \""+sutServer.URL+"\"\n")
 
 	// follow_redirects: false — should capture the 307 without following
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/auth.json", fmt.Sprintf(`{
-		"type": "http", "method": "GET", "path": "/auth",
-		"url": %q, "follow_redirects": false
-	}`, sutServer.URL))
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", fmt.Sprintf(`
+entrypoints:
+  auth:
+    type: http
+    path: "/auth"
+    follow_redirects: false
+    url: "%s"
+`, sutServer.URL))
 
 	testutil.CreateFile(t, tmpDir, "suite/test_redirect/test.plan",
 		`Perform -> entrypoints/auth -> ExpectStatus: "307"`)
@@ -1618,15 +1774,30 @@ func TestExpectTimeout_PerAPITimeout(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", fmt.Sprintf(`{
-		"type":"http", "path":"/trigger", "url":%q
-	}`, sutServer.URL))
-	testutil.CreateFile(t, tmpDir, "suite/apis/external.json", `{
-		"mode":"mock", "url":"/v1/call", "timeout":"500ms",
-		"expected_request":{"body":"{\"will_never_arrive\":true}"},
-		"default_response":{"code":200,"body":"{}"}
-	}`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", "\nsut_base_url: \""+sutServer.URL+"\"\n")
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", fmt.Sprintf(`
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+    url: "%s"
+
+`, sutServer.URL))
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+apis:
+  external:
+    mode: mock
+    url: /v1/call
+    timeout: 500ms
+    expected_request:
+      body: '{"will_never_arrive":true}'
+    default_response:
+      code: 200
+      body: '{}'
+`)
 	testutil.CreateFile(t, tmpDir, "suite/test_timeout/test.plan",
 		"Perform -> entrypoints/webhook\nExpect -> external")
 
@@ -1670,18 +1841,30 @@ func TestExpectTimeout_GlobalFallback(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{
-		"concurrency":1,
-		"timeouts":{"expect":"500ms"}
-	}`)
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", fmt.Sprintf(`{
-		"type":"http", "path":"/trigger", "url":%q
-	}`, sutServer.URL))
-	testutil.CreateFile(t, tmpDir, "suite/apis/external.json", `{
-		"mode":"mock", "url":"/v1/call",
-		"expected_request":{"body":"{\"will_never_arrive\":true}"},
-		"default_response":{"code":200,"body":"{}"}
-	}`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+timeouts:
+  expect: 500ms
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", fmt.Sprintf(`
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+    url: "%s"
+
+`, sutServer.URL))
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+apis:
+  external:
+    mode: mock
+    url: /v1/call
+    expected_request:
+      body: '{"will_never_arrive":true}'
+    default_response:
+      code: 200
+      body: '{}'
+`)
 	testutil.CreateFile(t, tmpDir, "suite/test_timeout/test.plan",
 		"Perform -> entrypoints/webhook\nExpect -> external")
 
@@ -1738,23 +1921,39 @@ func TestExpectTimeout_IndependentFailure(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{
-		"concurrency":1,
-		"timeouts":{"expect":"500ms"}
-	}`)
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", fmt.Sprintf(`{
-		"type":"http", "path":"/trigger", "url":%q
-	}`, sutServer.URL))
-	testutil.CreateFile(t, tmpDir, "suite/apis/fulfilled.json", `{
-		"mode":"mock", "url":"/v1/call",
-		"expected_request":{"body":"{\"match\":\"yes\"}"},
-		"default_response":{"code":200,"body":"{}"}
-	}`)
-	testutil.CreateFile(t, tmpDir, "suite/apis/missed.json", `{
-		"mode":"mock", "url":"/v1/other",
-		"expected_request":{"body":"{\"will_never_arrive\":true}"},
-		"default_response":{"code":200,"body":"{}"}
-	}`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+timeouts:
+  expect: 500ms
+`)
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", fmt.Sprintf(`
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+    url: "%s"
+
+`, sutServer.URL))
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+apis:
+  fulfilled:
+    mode: mock
+    url: /v1/call
+    expected_request:
+      body: '{"match":"yes"}'
+    default_response:
+      code: 200
+      body: '{}'
+
+  missed:
+    mode: mock
+    url: /v1/other
+    expected_request:
+      body: '{"will_never_arrive":true}'
+    default_response:
+      code: 200
+      body: '{}'
+`)
 	testutil.CreateFile(t, tmpDir, "suite/test_mixed/test.plan",
 		"Perform -> entrypoints/webhook\nExpect -> fulfilled\nExpect -> missed")
 

@@ -1,0 +1,27 @@
+concurrency: 6
+sut_command: "go run ../../sut/main.go"
+evaluator:
+  provider: gemini
+  model: gemini-2.0-flash
+  api_key_env: GEMINI_API_KEY
+timeouts:
+  perform: 30s
+  expect: 30s
+  ai_evaluator: 60s
+apis:
+  intent:
+    mode: mock
+    url: "/v1beta/models/gemini-2.0-flash:generateContent"
+    default_response:
+      code: 200
+      body: '{"candidates":[{"content":{"parts":[{"text":"{}"}],"role":"model"},"finishReason":"STOP"}]}'
+  message:
+    mode: mock
+    url: "/v1beta/models/gemini-2.0-flash:generateContent"
+    default_response:
+      code: 200
+      body: '{"candidates":[{"content":{"parts":[{"text":"Thank you for contacting TechCorp support."}],"role":"model"},"finishReason":"STOP"}]}'
+entrypoints:
+  ask:
+    type: http
+    path: "/ask"

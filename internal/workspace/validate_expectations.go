@@ -45,9 +45,15 @@ func ValidateUniqueExpectedRequests(suite *Suite) error {
 	}
 
 	for k, names := range seen {
-		if len(names) < 2 {
+		
+		uniqueNames := make(map[string]bool)
+		for _, n := range names {
+			uniqueNames[n] = true
+		}
+		if len(uniqueNames) < 2 {
 			continue
 		}
+
 		sort.Strings(names)
 		return fmt.Errorf("duplicate normalized expected request for API %q across tests %v (implicit correlation requires unique expectations per API)", k.api, names)
 	}

@@ -61,6 +61,10 @@ type Engine struct {
 	sutDoneCh   chan struct{} // closed when SUT goroutine returns (normal or crash)
 	sutErr      atomic.Value  // stores error
 	sutOutput   atomic.Value  // stores string
+
+	// Serializes outbound request correlation so two concurrent calls cannot both
+	// match the same ordered expectation index before MarkFulfilled runs.
+	processRequestMu sync.Mutex
 }
 
 // SUTError returns the SUT crash error if the process exited unexpectedly.

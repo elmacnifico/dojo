@@ -66,19 +66,37 @@ func TestPostgresQueryCapture(t *testing.T) {
 	defer sutServer.Close()
 
 	tmpDir := t.TempDir()
-	testutil.CreateFile(t, tmpDir, "test_suite/dojo.config", `{"concurrency": 1}`)
-	testutil.CreateFile(t, tmpDir, "test_suite/apis/postgres.json", `{"mode": "live", "protocol": "postgres", "url": "`+connStr+`"}`)
-	testutil.CreateFile(t, tmpDir, "test_suite/entrypoints/webhook.json", `{"type": "http", "path": "/trigger", "url": "`+sutServer.URL+`"}`)
+	testutil.CreateFile(t, tmpDir, "test_suite/dojo.yaml", `
+concurrency: 1
+`)
+	testutil.AppendFile(t, tmpDir, "test_suite/dojo.yaml", `
+apis:
+  postgres:
+    mode: live
+    protocol: postgres
+    url: '`+connStr+`'
+`)
+	testutil.AppendFile(t, tmpDir, "test_suite/dojo.yaml", `
+entrypoints:
+  webhook:
+    type: http
+    path: /trigger
+    url: '`+sutServer.URL+`'
+`)
 
 	testutil.CreateFile(t, tmpDir, "test_suite/test_001/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
 Expect -> postgres -> Payload: ""
 `)
 	testutil.CreateFile(t, tmpDir, "test_suite/test_001/incoming.json", `{"id": "test_001"}`)
-	testutil.CreateFile(t, tmpDir, "test_suite/test_001/apis/postgres.json", `{
-		"expected_request": {"body": "INSERT INTO users (name) VALUES ('test_001')"},
-		"expected_response": {"body": "INSERT 0 1"}
-	}`)
+	testutil.AppendFile(t, tmpDir, "test_suite/test_001/dojo.yaml", `
+apis:
+  postgres:
+    expected_request:
+      body: INSERT INTO users (name) VALUES ('test_001')
+    expected_response:
+      body: INSERT 0 1
+`)
 
 	testutil.CreateFile(t, tmpDir, "test_suite/seed/schema.sql", "CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT);")
 
@@ -121,21 +139,38 @@ Expect -> postgres -> Payload: ""
 	}
 
 	tmpDir2 := t.TempDir()
-	testutil.CreateFile(t, tmpDir2, "test_suite/dojo.config", `{"concurrency": 1}`)
-	testutil.CreateFile(t, tmpDir2, "test_suite/apis/postgres.json", `{"mode": "mock", "protocol": "postgres", "url": ""}`)
-	testutil.CreateFile(t, tmpDir2, "test_suite/entrypoints/webhook.json", `{"type": "http", "path": "/trigger", "url": "`+sutServer.URL+`"}`)
+	testutil.CreateFile(t, tmpDir2, "test_suite/dojo.yaml", `
+concurrency: 1
+`)
+	testutil.AppendFile(t, tmpDir2, "test_suite/dojo.yaml", `
+apis:
+  postgres:
+    mode: mock
+    protocol: postgres
+    url: ''
+`)
+	testutil.AppendFile(t, tmpDir2, "test_suite/dojo.yaml", `
+entrypoints:
+  webhook:
+    type: http
+    path: /trigger
+    url: '`+sutServer.URL+`'
+`)
 
 	testutil.CreateFile(t, tmpDir2, "test_suite/test_002/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
 Expect -> postgres -> Payload: ""
 `)
 	testutil.CreateFile(t, tmpDir2, "test_suite/test_002/incoming.json", `{"id": "test_002"}`)
-	testutil.CreateFile(t, tmpDir2, "test_suite/test_002/apis/postgres.json", `{
-		"mode": "mock",
-		"protocol": "postgres",
-		"url": "",
-		"expected_request": {"body": "INSERT INTO users (name) VALUES ('test_002')"}
-	}`)
+	testutil.AppendFile(t, tmpDir2, "test_suite/test_002/dojo.yaml", `
+apis:
+  postgres:
+    mode: mock
+    protocol: postgres
+    url: ''
+    expected_request:
+      body: INSERT INTO users (name) VALUES ('test_002')
+`)
 
 	ws2, err := workspace.LoadWorkspace(tmpDir2)
 	if err != nil {

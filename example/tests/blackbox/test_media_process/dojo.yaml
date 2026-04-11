@@ -1,0 +1,7 @@
+apis:
+  media:
+    mode: mock
+    default_response:
+      code: 200
+      file: photo.jpg
+      content_type: image/jpeg

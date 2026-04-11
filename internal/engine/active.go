@@ -25,6 +25,7 @@ type ActiveTest struct {
 	Suite        *workspace.Suite
 	Ctx          context.Context
 	Expectations map[string][]*Expectation
+	Variables    map[string]any
 	mu           sync.Mutex
 	done         chan struct{}
 }

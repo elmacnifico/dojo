@@ -1,1 +1,1 @@
-Perform -> entrypoints/not_found -> ExpectStatus: "404"
+Perform -> GET /not-found -> ExpectStatus: "404"

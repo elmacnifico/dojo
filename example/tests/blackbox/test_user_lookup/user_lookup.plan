@@ -1,4 +1,4 @@
-Perform -> entrypoints/webhook -> Payload: incoming.json
+Perform -> POST /trigger -> Payload: incoming.json
 
 Expect -> postgres -> Request: postgres_request.sql
 Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.json

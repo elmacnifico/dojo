@@ -13,18 +13,18 @@ import (
 
 // PayloadSpec configures raw payload matching for request or response assertions.
 type PayloadSpec struct {
-	Body    string `json:"body,omitempty"`
-	File    string `json:"file,omitempty"`
-	Payload []byte `json:"-"`
+	Body    string `json:"body,omitempty" yaml:"body,omitempty"`
+	File    string `json:"file,omitempty" yaml:"file,omitempty"`
+	Payload []byte `json:"-" yaml:"-"`
 }
 
 // DefaultResponse defines the payload returned to the SUT upon successful correlation.
 type DefaultResponse struct {
-	Body        string `json:"body,omitempty"`
-	File        string `json:"file,omitempty"`
-	Code        int    `json:"code,omitempty"`
-	ContentType string `json:"content_type,omitempty"`
-	Payload     []byte `json:"-"`
+	Body        string `json:"body,omitempty" yaml:"body,omitempty"`
+	File        string `json:"file,omitempty" yaml:"file,omitempty"`
+	Code        int    `json:"code,omitempty" yaml:"code,omitempty"`
+	ContentType string `json:"content_type,omitempty" yaml:"content_type,omitempty"`
+	Payload     []byte `json:"-" yaml:"-"`
 }
 
 // ExpectationSpec pairs an expected request with the response to return.
@@ -37,18 +37,18 @@ type ExpectationSpec struct {
 
 // APIConfig controls the mode and URL behavior for an outbound SUT dependency.
 type APIConfig struct {
-	Protocol         string            `json:"protocol,omitempty"` // "http", "postgres" (defaults to "http")
-	Mode             string            `json:"mode,omitempty"`     // "mock" or "live"
-	Timeout          string            `json:"timeout"`
-	URL              string            `json:"url"`
-	Headers          map[string]string `json:"headers,omitempty"` // For API keys via env vars
-	ExpectedRequest  *PayloadSpec      `json:"expected_request,omitempty"`
-	ExpectedResponse *PayloadSpec      `json:"expected_response,omitempty"`
-	DefaultResponse  *DefaultResponse  `json:"default_response,omitempty"`
+	Protocol         string            `json:"protocol,omitempty" yaml:"protocol,omitempty"` // "http", "postgres" (defaults to "http")
+	Mode             string            `json:"mode,omitempty" yaml:"mode,omitempty"`     // "mock" or "live"
+	Timeout          string            `json:"timeout" yaml:"timeout"`
+	URL              string            `json:"url" yaml:"url"`
+	Headers          map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"` // For API keys via env vars
+	ExpectedRequest  *PayloadSpec      `json:"expected_request,omitempty" yaml:"expected_request,omitempty"`
+	ExpectedResponse *PayloadSpec      `json:"expected_response,omitempty" yaml:"expected_response,omitempty"`
+	DefaultResponse  *DefaultResponse  `json:"default_response,omitempty" yaml:"default_response,omitempty"`
 
 	// OrderedExpectations holds multiple (request, response) pairs for plans
 	// with more than one Expect line targeting the same API.
-	OrderedExpectations []ExpectationSpec `json:"-"`
+	OrderedExpectations []ExpectationSpec `json:"-" yaml:"-"`
 }
 
 // TimeoutDuration parses the per-API Timeout string into a time.Duration.
@@ -63,13 +63,13 @@ func (a APIConfig) TimeoutDuration() time.Duration {
 
 // EntrypointConfig represents how Dojo triggers the SUT to start a test.
 type EntrypointConfig struct {
-	Type             string            `json:"type"`
-	Method           string            `json:"method,omitempty"`
-	Path             string            `json:"path"`
-	URL              string            `json:"url,omitempty"`
-	Headers          map[string]string `json:"headers,omitempty"`
-	FollowRedirects  *bool             `json:"follow_redirects,omitempty"`
-	ExpectedResponse *PayloadSpec      `json:"expected_response,omitempty"`
+	Type             string            `json:"type" yaml:"type"`
+	Method           string            `json:"method,omitempty" yaml:"method,omitempty"`
+	Path             string            `json:"path" yaml:"path"`
+	URL              string            `json:"url,omitempty" yaml:"url,omitempty"`
+	Headers          map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"`
+	FollowRedirects  *bool             `json:"follow_redirects,omitempty" yaml:"follow_redirects,omitempty"`
+	ExpectedResponse *PayloadSpec      `json:"expected_response,omitempty" yaml:"expected_response,omitempty"`
 }
 
 // HTTPMethod returns the HTTP method, defaulting to POST.
@@ -82,10 +82,10 @@ func (e EntrypointConfig) HTTPMethod() string {
 
 // EvaluatorConfig holds the rules for AI evaluation.
 type EvaluatorConfig struct {
-	Provider  string `json:"provider"`      // "gemini", "openai", "anthropic"
-	Model     string `json:"model"`         // e.g., "gemini-1.5-flash", "gpt-4"
-	APIKeyEnv string `json:"api_key_env"`   // e.g., "GEMINI_API_KEY"
-	URL       string `json:"url,omitempty"` // For custom/local endpoints
+	Provider  string `json:"provider" yaml:"provider"`      // "gemini", "openai", "anthropic"
+	Model     string `json:"model" yaml:"model"`         // e.g., "gemini-1.5-flash", "gpt-4"
+	APIKeyEnv string `json:"api_key_env" yaml:"api_key_env"`   // e.g., "GEMINI_API_KEY"
+	URL       string `json:"url,omitempty" yaml:"url,omitempty"` // For custom/local endpoints
 }
 
 // Duration wraps time.Duration for JSON marshaling as a Go duration string (e.g. "5s", "300ms").
@@ -132,13 +132,13 @@ const (
 
 // TimeoutConfig holds configurable timeout durations for the engine.
 type TimeoutConfig struct {
-	SUTStartup      Duration `json:"sut_startup,omitempty"`
-	SUTShutdown     Duration `json:"sut_shutdown,omitempty"`
-	TCPPollInterval Duration `json:"tcp_poll_interval,omitempty"`
-	TCPDialTimeout  Duration `json:"tcp_dial_timeout,omitempty"`
-	Perform         Duration `json:"perform,omitempty"`
-	Expect          Duration `json:"expect,omitempty"`
-	AIEvaluator     Duration `json:"ai_evaluator,omitempty"`
+	SUTStartup      Duration `json:"sut_startup,omitempty" yaml:"sut_startup,omitempty"`
+	SUTShutdown     Duration `json:"sut_shutdown,omitempty" yaml:"sut_shutdown,omitempty"`
+	TCPPollInterval Duration `json:"tcp_poll_interval,omitempty" yaml:"tcp_poll_interval,omitempty"`
+	TCPDialTimeout  Duration `json:"tcp_dial_timeout,omitempty" yaml:"tcp_dial_timeout,omitempty"`
+	Perform         Duration `json:"perform,omitempty" yaml:"perform,omitempty"`
+	Expect          Duration `json:"expect,omitempty" yaml:"expect,omitempty"`
+	AIEvaluator     Duration `json:"ai_evaluator,omitempty" yaml:"ai_evaluator,omitempty"`
 }
 
 // ResolveDefaults fills zero-valued fields with sensible defaults.
@@ -168,13 +168,16 @@ func (tc *TimeoutConfig) ResolveDefaults() {
 
 // DojoConfig holds suite-level settings.
 type DojoConfig struct {
-	Concurrency int `json:"concurrency"`
+	Concurrency int `json:"concurrency" yaml:"concurrency"`
 	// SutCommand, when non-empty, starts the SUT as a child process before tests run. The engine
 	// then waits until the first HTTP entrypoint's TCP listen address accepts connections (host:port
 	// from the entrypoint URL, or 127.0.0.1:8080 when that URL is empty).
-	SutCommand string           `json:"sut_command,omitempty"`
-	Evaluator  *EvaluatorConfig `json:"evaluator,omitempty"`
-	Timeouts   TimeoutConfig    `json:"timeouts,omitempty"`
+	SutCommand string           `json:"sut_command,omitempty" yaml:"sut_command,omitempty"`
+	SutBaseURL string           `json:"sut_base_url,omitempty" yaml:"sut_base_url,omitempty"`
+	Evaluator  *EvaluatorConfig `json:"evaluator,omitempty" yaml:"evaluator,omitempty"`
+	Timeouts   TimeoutConfig    `json:"timeouts,omitempty" yaml:"timeouts,omitempty"`
+	APIs        map[string]APIConfig        `json:"apis,omitempty" yaml:"apis,omitempty"`
+	Entrypoints map[string]EntrypointConfig `json:"entrypoints,omitempty" yaml:"entrypoints,omitempty"`
 }
 
 // Test holds a distinct test configuration mapped by its folder.
@@ -204,33 +207,33 @@ type Workspace struct {
 
 // TestResult captures the outcome of a single test execution.
 type TestResult struct {
-	TestName   string        `json:"test_name"`
-	Status     string        `json:"status"` // "pass" or "fail"
-	DurationMs int64         `json:"duration_ms"`
-	Reason     string        `json:"reason,omitempty"`
-	Expected   string        `json:"expected,omitempty"`
-	Actual     string        `json:"actual,omitempty"`
+	TestName   string        `json:"test_name" yaml:"test_name"`
+	Status     string        `json:"status" yaml:"status"` // "pass" or "fail"
+	DurationMs int64         `json:"duration_ms" yaml:"duration_ms"`
+	Reason     string        `json:"reason,omitempty" yaml:"reason,omitempty"`
+	Expected   string        `json:"expected,omitempty" yaml:"expected,omitempty"`
+	Actual     string        `json:"actual,omitempty" yaml:"actual,omitempty"`
 }
 
 // TestFailure captures a failed assertion during test execution.
 type TestFailure struct {
-	TestName   string `json:"test_name"`
-	Expected   string `json:"expected"`
-	Actual     string `json:"actual"`
-	Diff       string `json:"diff"`
-	Reason     string `json:"reason"`
-	DurationMs int64  `json:"duration_ms,omitempty"`
+	TestName   string `json:"test_name" yaml:"test_name"`
+	Expected   string `json:"expected" yaml:"expected"`
+	Actual     string `json:"actual" yaml:"actual"`
+	Diff       string `json:"diff" yaml:"diff"`
+	Reason     string `json:"reason" yaml:"reason"`
+	DurationMs int64  `json:"duration_ms,omitempty" yaml:"duration_ms,omitempty"`
 }
 
 // TestSummary encapsulates the overall results of a suite execution.
 type TestSummary struct {
-	TotalRuns  int           `json:"total_runs"`
-	Passed     int           `json:"passed"`
-	Failed     int           `json:"failed"`
-	DurationMs int64         `json:"duration_ms,omitempty"`
-	SutOutput  string        `json:"sut_output,omitempty"`
-	Failures   []TestFailure `json:"failures"`
-	Results    []TestResult  `json:"results,omitempty"`
+	TotalRuns  int           `json:"total_runs" yaml:"total_runs"`
+	Passed     int           `json:"passed" yaml:"passed"`
+	Failed     int           `json:"failed" yaml:"failed"`
+	DurationMs int64         `json:"duration_ms,omitempty" yaml:"duration_ms,omitempty"`
+	SutOutput  string        `json:"sut_output,omitempty" yaml:"sut_output,omitempty"`
+	Failures   []TestFailure `json:"failures" yaml:"failures"`
+	Results    []TestResult  `json:"results,omitempty" yaml:"results,omitempty"`
 }
 
 // LoadWorkspace recursively discovers all test suites and configurations.
@@ -256,7 +259,7 @@ func LoadWorkspace(baseDir string) (*Workspace, error) {
 		}
 
 		suitePath := filepath.Join(baseDir, e.Name())
-		configPath := filepath.Join(suitePath, "dojo.config")
+		configPath := filepath.Join(suitePath, "dojo.yaml")
 
 		if _, err := os.Stat(configPath); err == nil {
 			suite, err := loadSuite(ws, suitePath, e.Name())
@@ -276,8 +279,8 @@ func loadSuite(ws *Workspace, suitePath, suiteName string) (*Suite, error) {
 		Entrypoints: make(map[string]EntrypointConfig),
 		Tests:       make(map[string]*Test),
 	}
-	configPath := filepath.Join(suitePath, "dojo.config")
-	if err := loadJSON(configPath, &suite.Config); err != nil {
+	configPath := filepath.Join(suitePath, "dojo.yaml")
+	if err := loadYAML(configPath, &suite.Config); err != nil {
 		return nil, err
 	}
 	if err := validateSuiteConfig(suiteName, &suite.Config); err != nil {
@@ -290,59 +293,37 @@ func loadSuite(ws *Workspace, suitePath, suiteName string) (*Suite, error) {
 		suite.StartupPlan = string(b)
 	}
 
-	// Read Suite APIs
-	apisDir := filepath.Join(suitePath, "apis")
-	if apiEntries, err := os.ReadDir(apisDir); err == nil {
-		for _, apiE := range apiEntries {
-			if strings.HasSuffix(apiE.Name(), ".json") {
-				name := strings.TrimSuffix(apiE.Name(), ".json")
-				var cfg APIConfig
-				if err := loadJSON(filepath.Join(apisDir, apiE.Name()), &cfg); err != nil {
-					return nil, err
-				}
-				expandAPIConfig(&cfg)
-				if err := validateAPIConfig(name, &cfg); err != nil {
-					return nil, err
-				}
-				if err := resolvePayload(&cfg, suitePath, ""); err != nil {
-					return nil, err
-				}
-				suite.APIs[name] = cfg
-			}
+	for name, cfg := range suite.Config.APIs {
+		expandAPIConfig(&cfg)
+		if err := validateAPIConfig(name, &cfg); err != nil {
+			return nil, err
 		}
+		if err := resolvePayload(&cfg, suitePath, ""); err != nil {
+			return nil, err
+		}
+		suite.APIs[name] = cfg
 	}
 
-	// Read Suite Entrypoints
-	entrypointsDir := filepath.Join(suitePath, "entrypoints")
-	if epEntries, err := os.ReadDir(entrypointsDir); err == nil {
-		for _, epE := range epEntries {
-			if strings.HasSuffix(epE.Name(), ".json") {
-				name := strings.TrimSuffix(epE.Name(), ".json")
-				var cfg EntrypointConfig
-				if err := loadJSON(filepath.Join(entrypointsDir, epE.Name()), &cfg); err != nil {
-					return nil, err
-				}
-				expandEntrypointConfig(&cfg)
-				if err := validateEntrypointConfig(name, &cfg); err != nil {
-					return nil, err
-				}
+	for name, cfg := range suite.Config.Entrypoints {
+		expandEntrypointConfig(&cfg)
+		if err := validateEntrypointConfig(name, &cfg); err != nil {
+			return nil, err
+		}
 
-				// Load expected response fixture if provided
-				if cfg.ExpectedResponse != nil {
-					if cfg.ExpectedResponse.File != "" {
-						b, err := os.ReadFile(filepath.Join(suitePath, cfg.ExpectedResponse.File))
-						if err != nil {
-							return nil, fmt.Errorf("failed to read entrypoint expected response %s: %w", cfg.ExpectedResponse.File, err)
-						}
-						cfg.ExpectedResponse.Payload = b
-					} else if cfg.ExpectedResponse.Body != "" {
-						cfg.ExpectedResponse.Payload = []byte(cfg.ExpectedResponse.Body)
-					}
+		// Load expected response fixture if provided
+		if cfg.ExpectedResponse != nil {
+			if cfg.ExpectedResponse.File != "" {
+				b, err := os.ReadFile(filepath.Join(suitePath, cfg.ExpectedResponse.File))
+				if err != nil {
+					return nil, fmt.Errorf("failed to read entrypoint expected response %s: %w", cfg.ExpectedResponse.File, err)
 				}
-
-				suite.Entrypoints[name] = cfg
+				cfg.ExpectedResponse.Payload = b
+			} else if cfg.ExpectedResponse.Body != "" {
+				cfg.ExpectedResponse.Payload = []byte(cfg.ExpectedResponse.Body)
 			}
 		}
+
+		suite.Entrypoints[name] = cfg
 	}
 
 	// Read Suite Eval
@@ -381,50 +362,54 @@ func loadTest(ws *Workspace, suite *Suite, suitePath, testName string) (*Test, e
 		Entrypoints: make(map[string]EntrypointConfig),
 	}
 
-	// Read Test APIs overrides
-	testAPIsDir := filepath.Join(testPath, "apis")
-	if tapEntries, err := os.ReadDir(testAPIsDir); err == nil {
-		for _, tae := range tapEntries {
-			if strings.HasSuffix(tae.Name(), ".json") {
-				name := strings.TrimSuffix(tae.Name(), ".json")
-				var cfg APIConfig
-				if suiteCfg, ok := suite.APIs[name]; ok {
-					cfg = CopyAPIConfig(suiteCfg)
-				}
-				if err := loadJSON(filepath.Join(testAPIsDir, tae.Name()), &cfg); err != nil {
-					return nil, err
-				}
-				expandAPIConfig(&cfg)
-				if err := validateAPIConfig(name, &cfg); err != nil {
-					return nil, fmt.Errorf("in test %s: %w", testName, err)
-				}
-				if err := resolvePayload(&cfg, testPath, suitePath); err != nil {
-					return nil, fmt.Errorf("in test %s api %s: %w", testName, name, err)
-				}
-				test.APIs[name] = cfg
-			}
+	var testOverride DojoConfig
+	testConfigPath := filepath.Join(testPath, "dojo.yaml")
+	if _, err := os.Stat(testConfigPath); err == nil {
+		if err := loadYAML(testConfigPath, &testOverride); err != nil {
+			return nil, err
 		}
 	}
 
-	// Read Test Entrypoint overrides
-	testEPDir := filepath.Join(testPath, "entrypoints")
-	if epEntries, err := os.ReadDir(testEPDir); err == nil {
-		for _, epe := range epEntries {
-			if strings.HasSuffix(epe.Name(), ".json") {
-				name := strings.TrimSuffix(epe.Name(), ".json")
-				var cfg EntrypointConfig
-				if suiteCfg, ok := suite.Entrypoints[name]; ok {
-					cfg = CopyEntrypointConfig(suiteCfg)
-				}
-				if err := loadJSON(filepath.Join(testEPDir, epe.Name()), &cfg); err != nil {
-					return nil, err
-				}
-				expandEntrypointConfig(&cfg)
-				if err := validateEntrypointConfig(name, &cfg); err != nil {
-					return nil, fmt.Errorf("in test %s: %w", testName, err)
-				}
-				test.Entrypoints[name] = cfg
-			}
+	// Apply API overrides
+	for name, overrideCfg := range testOverride.APIs {
+		var cfg APIConfig
+		if suiteCfg, ok := suite.APIs[name]; ok {
+			cfg = CopyAPIConfig(suiteCfg)
+		}
+		cfg = mergeAPIConfig(cfg, overrideCfg)
+		expandAPIConfig(&cfg)
+		if err := validateAPIConfig(name, &cfg); err != nil {
+			return nil, fmt.Errorf("in test %s: %w", testName, err)
+		}
+		if err := resolvePayload(&cfg, testPath, suitePath); err != nil {
+			return nil, fmt.Errorf("in test %s api %s: %w", testName, name, err)
+		}
+		test.APIs[name] = cfg
+	}
+	// Copy remaining suite APIs
+	for name, suiteCfg := range suite.APIs {
+		if _, ok := test.APIs[name]; !ok {
+			test.APIs[name] = CopyAPIConfig(suiteCfg)
+		}
+	}
+
+	// Apply Entrypoint overrides
+	for name, overrideCfg := range testOverride.Entrypoints {
+		var cfg EntrypointConfig
+		if suiteCfg, ok := suite.Entrypoints[name]; ok {
+			cfg = CopyEntrypointConfig(suiteCfg)
+		}
+		cfg = mergeEntrypointConfig(cfg, overrideCfg)
+		expandEntrypointConfig(&cfg)
+		if err := validateEntrypointConfig(name, &cfg); err != nil {
+			return nil, fmt.Errorf("in test %s: %w", testName, err)
+		}
+		test.Entrypoints[name] = cfg
+	}
+	// Copy remaining suite Entrypoints
+	for name, suiteCfg := range suite.Entrypoints {
+		if _, ok := test.Entrypoints[name]; !ok {
+			test.Entrypoints[name] = CopyEntrypointConfig(suiteCfg)
 		}
 	}
 
@@ -598,6 +583,18 @@ func WireFixturesFromPlan(doc *ParsedDocument, test *Test, suite *Suite, testPat
 			}
 		}
 
+		if !hasRequest {
+			// Implicit fixture resolution
+			implicitFile := apiName + "_request.json"
+			if cfg.Protocol == "postgres" || strings.HasPrefix(cfg.URL, "postgres://") {
+				implicitFile = apiName + "_request.sql"
+			}
+			if _, err := ResolveFile(implicitFile, testPath, suitePath); err == nil {
+				spec.ExpectedRequest = &PayloadSpec{File: implicitFile}
+				hasRequest = true
+			}
+		}
+
 		if hasRequest {
 			// If this is the first Expect for this API and an ExpectedRequest
 			// was already set from a previous pass (or JSON config), migrate
@@ -613,20 +610,32 @@ func WireFixturesFromPlan(doc *ParsedDocument, test *Test, suite *Suite, testPat
 		} else if spec.Response != nil {
 			// Expect with no Request: clause but a Respond: clause -- just update the response.
 			cfg.DefaultResponse = spec.Response
+		} else {
+			// Expect with no Request and no implicit fixture found.
+			// We still need to record the expectation so it can be fulfilled!
+			// We add an empty spec.
+			if cfg.ExpectedRequest != nil && len(cfg.OrderedExpectations) == 0 {
+				cfg.OrderedExpectations = append(cfg.OrderedExpectations, ExpectationSpec{
+					ExpectedRequest: cfg.ExpectedRequest,
+					Response:        cfg.DefaultResponse,
+				})
+				cfg.ExpectedRequest = nil
+			}
+			cfg.OrderedExpectations = append(cfg.OrderedExpectations, spec)
 		}
 
 		// Resolve payloads for all ordered expectation specs.
 		for i := range cfg.OrderedExpectations {
 			s := &cfg.OrderedExpectations[i]
 			if s.ExpectedRequest != nil && s.ExpectedRequest.File != "" {
-				b, err := resolveFile(s.ExpectedRequest.File, testPath, suitePath)
+				b, err := ResolveFile(s.ExpectedRequest.File, testPath, suitePath)
 				if err != nil {
 					return fmt.Errorf("API %s expectation %d request: %w", apiName, i, err)
 				}
 				s.ExpectedRequest.Payload = b
 			}
 			if s.Response != nil && s.Response.File != "" {
-				b, err := resolveFile(s.Response.File, testPath, suitePath)
+				b, err := ResolveFile(s.Response.File, testPath, suitePath)
 				if err != nil {
 					return fmt.Errorf("API %s expectation %d response: %w", apiName, i, err)
 				}
@@ -768,7 +777,7 @@ func expandEntrypointConfig(cfg *EntrypointConfig) {
 // the same filename exists in both directories and both are valid JSON objects,
 // the fallback (suite) acts as the base and the primary (test) is deep-merged
 // on top, so test fixtures only need to carry the fields that differ.
-func resolveFile(filename, primaryDir, fallbackDir string) ([]byte, error) {
+func ResolveFile(filename, primaryDir, fallbackDir string) ([]byte, error) {
 	primary, primaryErr := os.ReadFile(filepath.Join(primaryDir, filename))
 	var fallback []byte
 	var fallbackErr error
@@ -786,14 +795,22 @@ func resolveFile(filename, primaryDir, fallbackDir string) ([]byte, error) {
 	case fallbackErr != nil:
 		return primary, nil
 	default:
-		return deepMergeJSON(fallback, primary)
+		if strings.HasSuffix(filename, ".json") {
+			merged, err := DeepMergeJSON(fallback, primary)
+			if err != nil {
+				// If it's not a valid JSON object, just return the primary
+				return primary, nil
+			}
+			return merged, nil
+		}
+		return primary, nil
 	}
 }
 
 // deepMergeJSON merges two JSON byte slices, treating base as the default and
 // overlay as the override. Only JSON objects are merged recursively; if either
 // input is not a JSON object the overlay is returned as-is.
-func deepMergeJSON(base, overlay []byte) ([]byte, error) {
+func DeepMergeJSON(base, overlay []byte) ([]byte, error) {
 	var baseMap, overlayMap map[string]any
 	if err := json.Unmarshal(base, &baseMap); err != nil {
 		return overlay, nil
@@ -829,7 +846,7 @@ func mergeMaps(base, overlay map[string]any) map[string]any {
 func resolvePayload(cfg *APIConfig, primaryDir string, fallbackDir string) error {
 	if cfg.ExpectedRequest != nil {
 		if cfg.ExpectedRequest.File != "" {
-			b, err := resolveFile(cfg.ExpectedRequest.File, primaryDir, fallbackDir)
+			b, err := ResolveFile(cfg.ExpectedRequest.File, primaryDir, fallbackDir)
 			if err != nil {
 				return fmt.Errorf("expected_request: %w", err)
 			}
@@ -841,7 +858,7 @@ func resolvePayload(cfg *APIConfig, primaryDir string, fallbackDir string) error
 
 	if cfg.ExpectedResponse != nil {
 		if cfg.ExpectedResponse.File != "" {
-			b, err := resolveFile(cfg.ExpectedResponse.File, primaryDir, fallbackDir)
+			b, err := ResolveFile(cfg.ExpectedResponse.File, primaryDir, fallbackDir)
 			if err != nil {
 				return fmt.Errorf("expected_response: %w", err)
 			}
@@ -853,7 +870,7 @@ func resolvePayload(cfg *APIConfig, primaryDir string, fallbackDir string) error
 
 	if cfg.DefaultResponse != nil {
 		if cfg.DefaultResponse.File != "" {
-			b, err := resolveFile(cfg.DefaultResponse.File, primaryDir, fallbackDir)
+			b, err := ResolveFile(cfg.DefaultResponse.File, primaryDir, fallbackDir)
 			if err != nil {
 				return fmt.Errorf("default_response: %w", err)
 			}

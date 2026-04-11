@@ -1,0 +1,7 @@
+Perform -> POST /trigger -> Payload: incoming.json
+
+Expect -> postgres -> Request: query.sql
+Expect -> gemini
+Expect -> whatsapp
+
+Perform -> postgres -> check.sql -> "1"

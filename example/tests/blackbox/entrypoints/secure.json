@@ -1,5 +1,0 @@
-{
-  "type": "http",
-  "method": "GET",
-  "path": "/secure"
-}

@@ -1,3 +1,3 @@
-Perform -> entrypoints/media_process -> Payload: incoming.json
+Perform -> POST /media-process -> Payload: incoming.json
 
 Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.json

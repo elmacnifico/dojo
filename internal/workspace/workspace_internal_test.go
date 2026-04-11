@@ -578,7 +578,7 @@ func TestDeepMergeJSON(t *testing.T) {
 		t.Parallel()
 		base := []byte(`{"a":1,"nested":{"x":10,"y":20}}`)
 		overlay := []byte(`{"b":2,"nested":{"y":99,"z":30}}`)
-		got, err := deepMergeJSON(base, overlay)
+		got, err := DeepMergeJSON(base, overlay)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -608,7 +608,7 @@ func TestDeepMergeJSON(t *testing.T) {
 		t.Parallel()
 		base := []byte(`{"items":[1,2,3]}`)
 		overlay := []byte(`{"items":[99]}`)
-		got, err := deepMergeJSON(base, overlay)
+		got, err := DeepMergeJSON(base, overlay)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -624,7 +624,7 @@ func TestDeepMergeJSON(t *testing.T) {
 
 	t.Run("non-object base returns overlay", func(t *testing.T) {
 		t.Parallel()
-		got, err := deepMergeJSON([]byte(`"plain string"`), []byte(`{"a":1}`))
+		got, err := DeepMergeJSON([]byte(`"plain string"`), []byte(`{"a":1}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -635,7 +635,7 @@ func TestDeepMergeJSON(t *testing.T) {
 
 	t.Run("non-object overlay returns overlay", func(t *testing.T) {
 		t.Parallel()
-		got, err := deepMergeJSON([]byte(`{"a":1}`), []byte(`"plain string"`))
+		got, err := DeepMergeJSON([]byte(`{"a":1}`), []byte(`"plain string"`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -659,7 +659,7 @@ func TestResolveFile_DeepMerge(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		got, err := resolveFile("f.json", testDir, suiteDir)
+		got, err := ResolveFile("f.json", testDir, suiteDir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -685,7 +685,7 @@ func TestResolveFile_DeepMerge(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(testDir, "f.json"), []byte(`{"test":1}`), 0644); err != nil {
 			t.Fatal(err)
 		}
-		got, err := resolveFile("f.json", testDir, suiteDir)
+		got, err := ResolveFile("f.json", testDir, suiteDir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -701,7 +701,7 @@ func TestResolveFile_DeepMerge(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(suiteDir, "f.json"), []byte(`{"suite":1}`), 0644); err != nil {
 			t.Fatal(err)
 		}
-		got, err := resolveFile("f.json", testDir, suiteDir)
+		got, err := ResolveFile("f.json", testDir, suiteDir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -720,7 +720,7 @@ func TestResolveFile_DeepMerge(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(testDir, "q.sql"), []byte("SELECT 2"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		got, err := resolveFile("q.sql", testDir, suiteDir)
+		got, err := ResolveFile("q.sql", testDir, suiteDir)
 		if err != nil {
 			t.Fatal(err)
 		}

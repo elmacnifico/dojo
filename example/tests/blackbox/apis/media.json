@@ -1,7 +1,0 @@
-{
-  "mode": "mock",
-  "default_response": {
-    "code": 200,
-    "body": "{}"
-  }
-}

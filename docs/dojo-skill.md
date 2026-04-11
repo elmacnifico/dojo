@@ -21,25 +21,17 @@ modify application code.
 
 ```text
 my_suite/
-  dojo.config                       # SUT command, concurrency, timeouts
+  dojo.yaml                         # SUT command, concurrency, timeouts, APIs, and entrypoints
   startup.plan                      # Optional: only Expect lines; runs after SUT is up, before any test
-  apis/
-    <api-name>.json                 # One file per external API (mock or live)
-  entrypoints/
-    <name>.json                     # How Dojo triggers the SUT
   seed/
     schema.sql                      # Shared SQL seed (run once before all tests)
   <fixture>.json                    # Suite-level fixture (deep-merge base)
 
   test_<name>/
     <name>.plan                     # Exactly one .plan file per test
-    incoming.json                   # Perform payload (webhook body, etc.)
+    dojo.yaml                       # Test-level overrides for APIs and entrypoints (optional)
     <fixture>.json                  # Test-level fixture (merged onto suite base)
     <fixture>.sql                   # SQL fixture
-    apis/
-      <api-name>.json              # Test-level API config override (optional)
-    entrypoints/
-      <name>.json                  # Test-level entrypoint override (optional)
     seed/
       seed.sql                     # Test-specific seed data (optional)
 ```
@@ -49,20 +41,33 @@ Key rules:
 - Each test directory has exactly one `.plan` file (any name, `.plan` extension).
 - Fixture files at both suite and test level with the same name are deep-merged.
 - `seed/` can exist at suite level (shared) and test level (per-test data).
+- **Ordered `Expect` + concurrency:** Several `Expect -> sameAPI` lines are matched in declaration order. The engine serializes mock correlation (`ProcessRequest` / `ProcessResponse`) so parallel SUT goroutines cannot double-fulfill the same expectation index. Prefer **specific** request JSON for HTTP subset match—tiny fixtures (e.g. only `generationConfig`) can match unrelated outbound calls and make suites flaky when the SUT runs background work.
 
 ### `startup.plan` (optional)
 
 Suite root file **`startup.plan`** may contain **only** `Expect` lines (same syntax as in test plans). Dojo runs it after proxies and env are ready and the SUT accepts TCP, **before** any `RunSuite` test. If it fails, no tests run. Full behavior and logging: repo **`docs/startup-plan.md`**. Example: **`example/tests/blackbox/startup.plan`** and SUT probe in **`example/sut/main.go`**.
 
-## dojo.config
+## dojo.yaml
 
-Minimal JSON file at the suite root:
+Central configuration file at the suite root:
 
-```json
-{
-  "concurrency": 4,
-  "sut_command": "go build -o /tmp/myapp-sut ./cmd/myapp/main.go && exec /tmp/myapp-sut"
-}
+```yaml
+concurrency: 4
+sut_command: "go build -o /tmp/myapp-sut ./cmd/myapp/main.go && exec /tmp/myapp-sut"
+sut_base_url: "http://127.0.0.1:8080" # Default base URL for inline HTTP triggers
+
+timeouts:
+  perform: 5s
+  expect: 2s
+
+apis:
+  gemini:
+    mode: mock
+    url: "/v1beta/models/gemini-2.5-flash:generateContent"
+  postgres:
+    mode: live
+    protocol: postgres
+    url: "postgres://user:pass@host:5432/db?sslmode=disable"
 ```
 
 | Field | Required | Description |
@@ -109,16 +114,13 @@ Supported providers: `gemini`, `openai`, `anthropic`.
 
 ### Timeouts (optional, Go duration strings)
 
-```json
-{
-  "timeouts": {
-    "perform": "5s",
-    "expect": "2s",
-    "sut_startup": "90s",
-    "sut_shutdown": "5s",
-    "ai_evaluator": "30s"
-  }
-}
+```yaml
+timeouts:
+  perform: 5s
+  expect: 2s
+  sut_startup: 90s
+  sut_shutdown: 5s
+  ai_evaluator: 30s
 ```
 
 | Key | Default | Controls |
@@ -146,22 +148,20 @@ Or per-test override in `test_slow/apis/gemini.json`:
 }
 ```
 
-## API Config: `apis/*.json`
+## API Config in `dojo.yaml`
 
-Each file defines one external API that the SUT calls. The filename (minus
-`.json`) becomes the API name used in `.plan` files.
+APIs are defined under the `apis` key in `dojo.yaml`. The key becomes the API name used in `.plan` files.
 
 ### Mock HTTP API
 
-```json
-{
-  "mode": "mock",
-  "url": "/v1/messages",
-  "default_response": {
-    "code": 200,
-    "body": "{\"status\":\"ok\"}"
-  }
-}
+```yaml
+apis:
+  whatsapp:
+    mode: mock
+    url: "/v1/messages"
+    default_response:
+      code: 200
+      body: '{"status":"ok"}'
 ```
 
 Dojo intercepts requests to `url` and returns `default_response` (or a
@@ -265,15 +265,17 @@ test_image_analysis/
 The `file` path is resolved relative to the **test directory first**, then the
 suite directory. This keeps test-specific binary fixtures next to their test.
 
-## Entrypoints: `entrypoints/*.json`
+## Entrypoints in `dojo.yaml`
 
-Define how Dojo triggers the SUT.
+Define named entrypoints under the `entrypoints` key in `dojo.yaml` for complex triggers (like following redirects). For simple HTTP calls, prefer **inline HTTP triggers** directly in the `.plan` file (e.g., `Perform -> POST /trigger`).
 
-```json
-{
-  "type": "http",
-  "path": "/trigger"
-}
+```yaml
+entrypoints:
+  auth_redirect:
+    type: http
+    method: GET
+    path: "/auth?state=abc123"
+    follow_redirects: false
 ```
 
 | Field | Description |
@@ -315,7 +317,7 @@ Test-level `test_valid_sig/entrypoints/webhook.json` (only the diff):
 
 Both tests reference the same entrypoint name in the `.plan`:
 ```text
-Perform -> entrypoints/webhook -> Payload: incoming.json -> ExpectStatus: "200"
+Perform -> POST /webhook -> Payload: incoming.json -> Status: 200
 ```
 
 ## The `.plan` DSL
@@ -344,11 +346,11 @@ Syntax: `Action -> Target -> Clause: value -> Clause: value`
 ### Example: standard test
 
 ```text
-Perform -> entrypoints/webhook -> Payload: incoming.json
+Perform -> POST /webhook -> Payload: incoming.json
 
-Expect -> postgres -> Request: postgres_request.sql
-Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.json
-Expect -> whatsapp -> Request: whatsapp_request.json
+Expect -> postgres
+Expect -> gemini
+Expect -> whatsapp
 ```
 
 Line by line:
@@ -428,7 +430,7 @@ Test-level `test_valid_sig/entrypoints/webhook.json`:
 ```
 
 ```text
-Perform -> entrypoints/webhook -> Payload: incoming.json -> ExpectStatus: "200"
+Perform -> POST /webhook -> Payload: incoming.json -> Status: 200
 ```
 
 Test-level `test_invalid_sig/entrypoints/webhook.json`:
@@ -441,15 +443,15 @@ Test-level `test_invalid_sig/entrypoints/webhook.json`:
 ```
 
 ```text
-Perform -> entrypoints/webhook -> Payload: incoming.json -> ExpectStatus: "401"
+Perform -> POST /webhook -> Payload: incoming.json -> Status: 401
 ```
 
 ### Example: binary payload
 
 ```text
-Perform -> entrypoints/upload -> Payload: image.jpg
+Perform -> POST /upload -> Payload: image.jpg
 
-Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.json
+Expect -> gemini
 ```
 
 Non-JSON files are sent as raw bytes.
@@ -461,9 +463,9 @@ at the test level to serve a real file. The plan does not need an `Expect`
 clause for the mocked API -- the test-level override applies automatically:
 
 ```text
-Perform -> entrypoints/media_process -> Payload: incoming.json
+Perform -> POST /media-process -> Payload: incoming.json
 
-Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.json
+Expect -> gemini
 ```
 
 With `test_media_process/apis/media.json`:
@@ -487,11 +489,11 @@ agent call followed by a conversation agent call to the same Gemini endpoint),
 use multiple `Expect` lines. They are matched in declaration order:
 
 ```text
-Perform -> entrypoints/webhook -> Payload: incoming.json
+Perform -> POST /webhook -> Payload: incoming.json
 
 Expect -> gemini -> Request: intent_request.json -> Respond: intent_response.json
 Expect -> gemini -> Request: conv_request.json -> Respond: conv_response.json
-Expect -> whatsapp -> Request: whatsapp_request.json
+Expect -> whatsapp
 ```
 
 The first Gemini call matches `intent_request.json` and gets `intent_response.json`.
@@ -501,7 +503,7 @@ Each expectation is fulfilled independently.
 ### Example: AI evaluation
 
 ```text
-Perform -> entrypoints/webhook -> Payload: incoming.json
+Perform -> POST /webhook -> Payload: incoming.json
 
 Expect -> gemini -> Request: gemini_request.json -> Evaluate Response
 ```
@@ -527,29 +529,29 @@ finishes and assert on the result:
 
 **Mode 1 -- OK (no Expect):** Query must execute without errors.
 ```text
-Perform -> postgres -> Query: check.sql
+Perform -> postgres -> check.sql
 ```
 
 **Mode 2 -- Row count:** Query must return exactly N rows.
 ```text
-Perform -> postgres -> Query: check.sql -> Expect: "1"
+Perform -> postgres -> check.sql -> "1"
 ```
 
 **Mode 3 -- JSON comparison:** Result rows compared via subset matching.
 ```text
-Perform -> postgres -> Query: check.sql -> Expect: expected.json
+Perform -> postgres -> check.sql -> expected.json
 ```
 
 ### Example: DB state assertion after insert
 
 ```text
-Perform -> entrypoints/webhook -> Payload: incoming.json
+Perform -> POST /webhook -> Payload: incoming.json
 
 Expect -> gemini -> Request: intent_request.json -> Respond: intent_response.json
 Expect -> gemini -> Request: conv_request.json -> Respond: conv_response.json
-Expect -> postgres -> Request: postgres_request.sql
+Expect -> postgres
 
-Perform -> postgres -> Query: check_insert.sql -> Expect: "1"
+Perform -> postgres -> check_insert.sql -> "1"
 ```
 
 The second `Perform` runs only after all three `Expect` lines are fulfilled.
@@ -562,16 +564,16 @@ The repo ships `example/tests/blackbox/test_perform_postgres/` which chains all
 four `Perform -> postgres` modes in **one plan**:
 
 ```text
-Perform -> entrypoints/webhook -> Payload: incoming.json
+Perform -> POST /webhook -> Payload: incoming.json
 
-Expect -> postgres -> Request: postgres_request.sql
-Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.json
-Expect -> whatsapp -> Request: whatsapp_request.json
+Expect -> postgres
+Expect -> gemini
+Expect -> whatsapp
 
-Perform -> postgres -> Query: check_row.sql -> Expect: "1"
-Perform -> postgres -> Query: check_display.sql -> Expect: expected.json
-Perform -> postgres -> Query: ping.sql
-Perform -> postgres -> Query: check_gone.sql -> Expect: "0"
+Perform -> postgres -> check_row.sql -> "1"
+Perform -> postgres -> check_display.sql -> expected.json
+Perform -> postgres -> ping.sql
+Perform -> postgres -> check_gone.sql -> "0"
 ```
 
 Run: `go run cmd/dojo/main.go ./example/tests/blackbox`
@@ -650,6 +652,28 @@ No two tests in a suite may share an identical normalized expected request for
 the same API. Dojo rejects exact duplicates at load time. If two different
 subset fixtures both match the same actual request at runtime, Dojo reports an
 ambiguous match error.
+
+## Best Practices: Fixtures and Concurrency
+
+### Minimize Useless JSONs
+
+Because Dojo uses subset matching, you should **never copy-paste massive payloads** from your application logs into your fixture files. 
+
+Instead, only include the fields that are directly relevant to the test's assertion.
+- **Reduces noise:** It is immediately obvious to a reader what the test is actually verifying.
+- **Reduces brittleness:** If an unrelated field in the SUT's outbound payload changes (like a timestamp, an unrelated config flag, or a new optional field), the test will not break.
+
+### Concurrency-Safe Fixtures
+
+When running tests in parallel (`concurrency > 1` in `dojo.yaml`), overly generic fixtures can cause flaky tests. 
+
+If your fixture is too small (e.g., `{ "generationConfig": { "temperature": 0.7 } }`), it might accidentally match background traffic emitted by the SUT, or it might match a request triggered by a *different* parallel test.
+
+To make fixtures concurrency-safe:
+- **Include unique identifiers:** Always include a field that uniquely ties the outbound request to the specific test trigger. For example, include the specific `user_id`, `session_id`, or a distinct string in the prompt/payload that is unique to that test case.
+- **Avoid overly generic subset matches:** Ensure your subset is specific enough that it cannot plausibly match another test's traffic.
+
+By combining these two practices—minimizing useless fields while retaining unique identifiers—you create suites that are both resilient to refactoring and safe to run at high concurrency.
 
 ## Running a Suite
 

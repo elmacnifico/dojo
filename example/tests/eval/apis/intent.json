@@ -1,8 +1,0 @@
-{
-  "mode": "mock",
-  "url": "/v1beta/models/gemini-2.0-flash:generateContent",
-  "default_response": {
-    "code": 200,
-    "body": "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"{}\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}"
-  }
-}

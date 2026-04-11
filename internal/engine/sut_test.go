@@ -1,92 +1,82 @@
-package engine_test
+package engine
 
 import (
-	"context"
+	"bytes"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-	"time"
-	"dojo/internal/engine"
 )
 
-func TestSUTRunner(t *testing.T) {
+func TestLoadSuiteEnvFiles(t *testing.T) {
 	tmpDir := t.TempDir()
-	mainFile := filepath.Join(tmpDir, "main.go")
-	dummySUT := `package main
-import (
-	"fmt"
-	"os"
-)
-func main() {
-	fmt.Println("Hello from SUT")
-	dbURL := os.Getenv("API_POSTGRES_URL")
-	fmt.Printf("Connected to: %s\n", dbURL)
-	
-	if os.Getenv("CRASH") == "1" {
-		os.Exit(1)
+
+	// Write .env
+	envContent := "TEST_API_URL=http://localhost:8080\nTEST_SECRET=12345"
+	os.WriteFile(filepath.Join(tmpDir, ".env"), []byte(envContent), 0644)
+
+	// Write .env.local
+	envLocalContent := "TEST_SECRET=67890\nTEST_LOCAL_ONLY=true"
+	os.WriteFile(filepath.Join(tmpDir, ".env.local"), []byte(envLocalContent), 0644)
+
+	LoadSuiteEnvFiles(tmpDir)
+
+	if val := os.Getenv("TEST_API_URL"); val != "http://localhost:8080" {
+		t.Errorf("expected TEST_API_URL to be 'http://localhost:8080', got %q", val)
+	}
+	if val := os.Getenv("TEST_SECRET"); val != "67890" {
+		t.Errorf("expected TEST_SECRET to be '67890', got %q", val)
+	}
+	if val := os.Getenv("TEST_LOCAL_ONLY"); val != "true" {
+		t.Errorf("expected TEST_LOCAL_ONLY to be 'true', got %q", val)
 	}
 }
-`
-	if err := os.WriteFile(mainFile, []byte(dummySUT), 0644); err != nil {
-		t.Fatalf("Failed to create dummy SUT: %v", err)
+
+func TestLoadSuiteEnvFiles_MissingFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	LoadSuiteEnvFiles(tmpDir)
+	// Should not panic
+}
+
+
+
+func TestPrefixWriter(t *testing.T) {
+	var buf bytes.Buffer
+	pw := newPrefixWriter(&buf, "[SUT] ")
+
+	// Write single line without newline
+	n, err := pw.Write([]byte("hello"))
+	if err != nil || n != 5 {
+		t.Fatalf("write 1 failed: %v, %d", err, n)
+	}
+	if buf.String() != "[SUT] hello" {
+		t.Errorf("expected '[SUT] hello', got %q", buf.String())
 	}
 
-	binFile := filepath.Join(tmpDir, "sut_bin")
-	cmd := engine.NewCommand(context.Background(), "go", "build", "-o", binFile, mainFile)
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("Failed to compile dummy SUT: %v", err)
+	// Write newline
+	n, err = pw.Write([]byte("\n"))
+	if err != nil || n != 1 {
+		t.Fatalf("write 2 failed: %v, %d", err, n)
+	}
+	if buf.String() != "[SUT] hello\n" {
+		t.Errorf("expected '[SUT] hello\\n', got %q", buf.String())
 	}
 
-	t.Run("Success", func(t *testing.T) {
-		runner := engine.NewSUTRunner(binFile, tmpDir)
-		runner.Env = []string{
-			"API_POSTGRES_URL=postgres://localhost:5432",
-		}
-		
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
+	// Write new line
+	n, err = pw.Write([]byte("world\n"))
+	if err != nil || n != 6 {
+		t.Fatalf("write 3 failed: %v, %d", err, n)
+	}
+	if buf.String() != "[SUT] hello\n[SUT] world\n" {
+		t.Errorf("expected '[SUT] hello\\n[SUT] world\\n', got %q", buf.String())
+	}
 
-		result, err := runner.Run(ctx)
-		if err != nil {
-			t.Fatalf("Failed to run SUT: %v", err)
-		}
-
-		if result.ExitCode != 0 {
-			t.Errorf("Expected exit code 0, got %d", result.ExitCode)
-		}
-
-		if !strings.Contains(result.Output, "Hello from SUT") {
-			t.Errorf("Expected output to contain 'Hello from SUT', got %s", result.Output)
-		}
-
-		if !strings.Contains(result.Output, "Connected to: postgres://localhost:5432") {
-			t.Errorf("Expected injected Env output, got %s", result.Output)
-		}
-
-		if result.CrashEvent {
-			t.Errorf("Did not expect CrashEvent to be true")
-		}
-	})
-
-	t.Run("Crash", func(t *testing.T) {
-		runner := engine.NewSUTRunner(binFile, tmpDir)
-		runner.Env = []string{"CRASH=1"}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		result, err := runner.Run(ctx)
-		if err == nil {
-			t.Errorf("Expected error from crashing SUT")
-		}
-
-		if result.ExitCode == 0 {
-			t.Errorf("Expected non-zero exit code, got %d", result.ExitCode)
-		}
-
-		if !result.CrashEvent {
-			t.Errorf("Expected CrashEvent to be true")
-		}
-	})
+	// Write multiple lines at once
+	n, err = pw.Write([]byte("line1\nline2\nline3"))
+	if err != nil || n != 17 {
+		t.Fatalf("write 4 failed: %v, %d", err, n)
+	}
+	expected := "[SUT] hello\n[SUT] world\n[SUT] line1\n[SUT] line2\n[SUT] line3"
+	if buf.String() != expected {
+		t.Errorf("expected %q, got %q", expected, buf.String())
+	}
 }

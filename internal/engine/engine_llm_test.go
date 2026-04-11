@@ -250,30 +250,25 @@ func TestCrossIDCorrelation(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Suite-level configs — routing is by normalized expected_request fixtures per test.
-	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
-
-	testutil.CreateFile(t, tmpDir, "suite/apis/postgres.json", `{
-		"mode": "live",
-		"protocol": "postgres",
-		"url": "`+connStr+`"
-	}`)
-
-	testutil.CreateFile(t, tmpDir, "suite/apis/gemini.json", `{
-		"mode": "mock",
-		"url": "/v1beta/models/gemini-2.5-flash:generateContent"
-	}`)
-
-	testutil.CreateFile(t, tmpDir, "suite/apis/whatsapp.json", `{
-		"mode": "mock",
-		"url": "/v1/messages",
-		"default_response": {"code": 200, "body": "{\"messaging_product\":\"whatsapp\",\"messages\":[{\"id\":\"wamid.test\"}]}"}
-	}`)
-
-	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", `{
-		"type": "http",
-		"path": "/trigger",
-		"url": "`+sutServer.URL+`"
-	}`)
+	testutil.CreateFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+sut_base_url: "`+sutServer.URL+`"
+apis:
+  postgres:
+    mode: live
+    protocol: postgres
+    url: "`+connStr+`"
+  gemini:
+    mode: mock
+    url: "/v1beta/models/gemini-2.5-flash:generateContent"
+  whatsapp:
+    mode: mock
+    url: "/v1/messages"
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+`)
 
 	testutil.CreateFile(t, tmpDir, "suite/seed/schema.sql",
 		"CREATE TABLE IF NOT EXISTS users (user_id TEXT, phone_number TEXT, display_name TEXT);")
