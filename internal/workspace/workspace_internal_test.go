@@ -215,7 +215,7 @@ func TestWireFixturesFromPlan(t *testing.T) {
 			}},
 		}}
 
-		if err := wireFixturesFromPlan(doc, test, suite, dir, ""); err != nil {
+		if err := WireFixturesFromPlan(doc, test, suite, dir, ""); err != nil {
 			t.Fatal(err)
 		}
 		cfg := test.APIs["gemini"]
@@ -245,7 +245,7 @@ func TestWireFixturesFromPlan(t *testing.T) {
 			}},
 		}}
 
-		if err := wireFixturesFromPlan(doc, test, suite, dir, ""); err != nil {
+		if err := WireFixturesFromPlan(doc, test, suite, dir, ""); err != nil {
 			t.Fatal(err)
 		}
 		cfg := test.APIs["postgres"]
@@ -272,7 +272,7 @@ func TestWireFixturesFromPlan(t *testing.T) {
 			}},
 		}}
 
-		if err := wireFixturesFromPlan(doc, test, suite, dir, ""); err != nil {
+		if err := WireFixturesFromPlan(doc, test, suite, dir, ""); err != nil {
 			t.Fatal(err)
 		}
 		cfg := test.APIs["whatsapp"]
@@ -295,7 +295,7 @@ func TestWireFixturesFromPlan(t *testing.T) {
 			}},
 		}}
 
-		err := wireFixturesFromPlan(doc, test, suite, t.TempDir(), "")
+		err := WireFixturesFromPlan(doc, test, suite, t.TempDir(), "")
 		if err == nil || !strings.Contains(err.Error(), "not defined in apis/") {
 			t.Errorf("expected error about undefined API, got %v", err)
 		}
@@ -319,7 +319,7 @@ func TestWireFixturesFromPlan(t *testing.T) {
 			}},
 		}}
 
-		if err := wireFixturesFromPlan(doc, test, suite, dir, ""); err != nil {
+		if err := WireFixturesFromPlan(doc, test, suite, dir, ""); err != nil {
 			t.Fatal(err)
 		}
 		if test.APIs["gemini"].DefaultResponse.Code != 201 {
@@ -349,7 +349,7 @@ func TestWireFixturesFromPlan(t *testing.T) {
 			}},
 		}}
 
-		if err := wireFixturesFromPlan(doc, test, suite, testDir, suiteDir); err != nil {
+		if err := WireFixturesFromPlan(doc, test, suite, testDir, suiteDir); err != nil {
 			t.Fatal(err)
 		}
 		var m map[string]any

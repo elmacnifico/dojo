@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -50,10 +52,10 @@ type geminiSafetySetting struct {
 }
 
 type geminiRequest struct {
-	Contents          []geminiContent        `json:"contents"`
+	Contents          []geminiContent         `json:"contents"`
 	SystemInstruction geminiSystemInstruction `json:"systemInstruction"`
 	GenerationConfig  geminiGenerationConfig  `json:"generationConfig"`
-	SafetySettings    []geminiSafetySetting  `json:"safetySettings"`
+	SafetySettings    []geminiSafetySetting   `json:"safetySettings"`
 }
 
 // Gemini response types (for parsing the mock response).
@@ -123,6 +125,52 @@ const messageSystemPrompt = "You are a customer service response writer for Tech
 	"Given the original customer message and the intent classification, " +
 	"write a helpful, professional response."
 
+// emitDojoStartupProbe posts a unique payload to the mocked Gemini API so the
+// Dojo example suite can assert on startup traffic via startup.plan.
+func emitDojoStartupProbe() {
+	base := strings.TrimSuffix(os.Getenv("API_GEMINI_URL"), "/")
+	if base == "" {
+		return
+	}
+	body := []byte(`{"contents":[{"role":"user","parts":[{"text":"__dojo_startup_probe__"}]}]}`)
+	target := base + "/v1beta/models/gemini-2.5-flash:generateContent"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+	if err != nil {
+		fmt.Printf("[SUT] startup probe build request: %v\n", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Printf("[SUT] startup probe request: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	fmt.Printf("[SUT] startup probe finished status=%d\n", resp.StatusCode)
+}
+
+// waitHealthThenStartupProbe waits until this process is serving /health, then
+// emits one outbound Gemini request for Dojo's startup.plan phase.
+func waitHealthThenStartupProbe() {
+	client := &http.Client{Timeout: 2 * time.Second}
+	for i := 0; i < 150; i++ {
+		resp, err := client.Get("http://127.0.0.1:8080/health")
+		if err == nil && resp.StatusCode == http.StatusOK {
+			resp.Body.Close()
+			emitDojoStartupProbe()
+			return
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	fmt.Printf("[SUT] startup probe skipped: /health not ready in time\n")
+}
+
 func main() {
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
@@ -151,6 +199,7 @@ func main() {
 	http.HandleFunc("/ask", handleAsk)
 
 	port := ":8080"
+	go waitHealthThenStartupProbe()
 	fmt.Printf("[SUT] Starting server on %s\n", port)
 	if err := http.ListenAndServe(port, nil); err != nil {
 		fmt.Printf("[SUT] Server crashed: %v\n", err)

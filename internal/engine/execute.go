@@ -88,11 +88,37 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 
 	// Phase 1: entrypoint trigger + observer expectations.
 	firstPhase := phases[0]
-	performLine := firstPhase.perform
+
+	active, ep, payload, expectStatus, err := e.prepareEntrypoint(ctx, id, test, suite, suiteName, firstPhase)
+	if err != nil {
+		return err
+	}
+
+	e.Registry.Register(id, active)
+	defer e.Registry.Unregister(id)
+
+	if err := e.triggerEntrypoint(ctx, suite, ep, payload, expectStatus); err != nil {
+		return err
+	}
+
+	if err := e.awaitPhaseExpectations(ctx, active); err != nil {
+		return err
+	}
+
+	// Subsequent phases: inline assertions (e.g. Perform -> postgres).
+	if err := e.executeSubsequentPhases(ctx, id, suiteName, phases[1:], livePGURL); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (e *Engine) prepareEntrypoint(ctx context.Context, id string, test *workspace.Test, suite *workspace.Suite, suiteName string, phase planPhase) (*ActiveTest, workspace.EntrypointConfig, []byte, int, error) {
+	performLine := phase.perform
 	epName := strings.TrimPrefix(performLine.Target, "entrypoints/")
 	ep, ok := suite.Entrypoints[epName]
 	if !ok {
-		return fmt.Errorf("entrypoint '%s' not found", epName)
+		return nil, ep, nil, 0, fmt.Errorf("entrypoint '%s' not found", epName)
 	}
 	if testEP, ok := test.Entrypoints[epName]; ok {
 		ep = testEP
@@ -111,7 +137,7 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 						fallbackPath := filepath.Join(e.Workspace.BaseDir, suiteName, *clause.Value)
 						b, err = os.ReadFile(fallbackPath)
 						if err != nil {
-							return fmt.Errorf("failed to read payload %s: %w", payloadPath, err)
+							return nil, ep, nil, 0, fmt.Errorf("failed to read payload %s: %w", payloadPath, err)
 						}
 					}
 					payload = b
@@ -123,7 +149,7 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 			if clause.Value != nil {
 				n, err := strconv.Atoi(*clause.Value)
 				if err != nil {
-					return fmt.Errorf("invalid ExpectStatus value %q: must be an integer", *clause.Value)
+					return nil, ep, nil, 0, fmt.Errorf("invalid ExpectStatus value %q: must be an integer", *clause.Value)
 				}
 				expectStatus = n
 			}
@@ -140,7 +166,7 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 	}
 
 	expIdx := make(map[string]int)
-	for _, l := range firstPhase.expects {
+	for _, l := range phase.expects {
 		apiName := l.Target
 		idx := expIdx[apiName]
 		exp := &Expectation{
@@ -165,9 +191,89 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 		close(active.done)
 	}
 
-	e.Registry.Register(id, active)
-	defer e.Registry.Unregister(id)
+	return active, ep, payload, expectStatus, nil
+}
 
+func (e *Engine) prepareStartupPlan(ctx context.Context, suite *workspace.Suite, suiteName string) (*ActiveTest, error) {
+	doc, err := workspace.ParsePlan(suite.StartupPlan)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse startup plan: %w", err)
+	}
+
+	expectLines := 0
+	for _, l := range doc.Lines {
+		if strings.ToLower(l.Action) != "expect" {
+			return nil, fmt.Errorf("startup plan can only contain Expect actions")
+		}
+		expectLines++
+		var detail strings.Builder
+		detail.WriteString(l.Action)
+		detail.WriteString(" -> ")
+		detail.WriteString(l.Target)
+		for _, c := range l.Clauses {
+			detail.WriteString(" ")
+			detail.WriteString(c.Key)
+			if c.Value != nil {
+				detail.WriteString(": ")
+				detail.WriteString(*c.Value)
+			}
+		}
+		e.log.Debug("startup plan expect",
+			"suite", suiteName,
+			"line", expectLines,
+			"detail", detail.String(),
+		)
+	}
+
+	test := &workspace.Test{
+		APIs:        make(map[string]workspace.APIConfig),
+		Entrypoints: make(map[string]workspace.EntrypointConfig),
+	}
+
+	suiteDir := filepath.Join(e.Workspace.BaseDir, suiteName)
+	if err := workspace.WireFixturesFromPlan(doc, test, suite, suiteDir, suiteDir); err != nil {
+		return nil, fmt.Errorf("failed to wire fixtures for startup plan: %w", err)
+	}
+
+	active := &ActiveTest{
+		ID:           "startup",
+		Test:         test,
+		Suite:        suite,
+		Ctx:          ctx,
+		Expectations: make(map[string][]*Expectation),
+		done:         make(chan struct{}),
+	}
+
+	expIdx := make(map[string]int)
+	for _, l := range doc.Lines {
+		apiName := l.Target
+		idx := expIdx[apiName]
+		exp := &Expectation{
+			Target: apiName,
+			Index:  idx,
+		}
+		if d := test.APIs[apiName].TimeoutDuration(); d > 0 {
+			exp.Deadline = d
+		} else {
+			exp.Deadline = suite.Config.Timeouts.Expect.Duration
+		}
+		for _, clause := range l.Clauses {
+			if strings.ToLower(clause.Key) == "evaluate response" {
+				exp.RequiresEval = true
+			}
+		}
+		active.Expectations[apiName] = append(active.Expectations[apiName], exp)
+		expIdx[apiName] = idx + 1
+	}
+
+	if len(active.Expectations) == 0 {
+		close(active.done)
+	}
+
+	return active, nil
+}
+
+func (e *Engine) triggerEntrypoint(ctx context.Context, suite *workspace.Suite, ep workspace.EntrypointConfig, payload []byte, expectStatus int) error {
 	switch ep.Type {
 	case "http":
 		url := ep.URL
@@ -224,15 +330,21 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 			}
 		}
 	default:
-		return fmt.Errorf("unsupported entrypoint type %q for %q; only \"http\" is currently supported", ep.Type, epName)
+		return fmt.Errorf("unsupported entrypoint type %q; only \"http\" is currently supported", ep.Type)
 	}
 
+	return nil
+}
+
+func (e *Engine) awaitPhaseExpectations(ctx context.Context, active *ActiveTest) error {
 	// Launch per-expectation timeout goroutines.
 	for api, exps := range active.Expectations {
 		for _, exp := range exps {
 			go func(apiName string, e *Expectation) {
+				timer := time.NewTimer(e.Deadline)
+				defer timer.Stop()
 				select {
-				case <-time.After(e.Deadline):
+				case <-timer.C:
 					active.MarkFulfilled(apiName, e.Index,
 						fmt.Errorf("timed out after %s waiting for expected request", e.Deadline))
 				case <-active.done:
@@ -242,7 +354,7 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 		}
 	}
 
-	// Wait for phase 1 expectations.
+	// Wait for phase expectations.
 	select {
 	case <-active.done:
 	case <-e.sutDeadCh:
@@ -274,15 +386,17 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 		}
 	}
 
-	// Subsequent phases: inline assertions (e.g. Perform -> postgres).
+	return nil
+}
+
+func (e *Engine) executeSubsequentPhases(ctx context.Context, id, suiteName string, phases []planPhase, livePGURL string) error {
 	testDir := filepath.Join(e.Workspace.BaseDir, suiteName, id)
 	suiteDir := filepath.Join(e.Workspace.BaseDir, suiteName)
-	for _, ph := range phases[1:] {
+	for _, ph := range phases {
 		if err := e.executePostgresPerform(ctx, ph.perform, testDir, suiteDir, livePGURL); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 

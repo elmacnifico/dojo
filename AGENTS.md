@@ -9,6 +9,7 @@ You act autonomously but incrementally. You must follow **Strict Test-Driven Dev
 Dojo is a testing engine that executes `.plan` files. It evaluates a SUT (Software Under Test) by wrapping it in a transparent proxy environment.
 * **The Initiator:** Proactively sends requests to the SUT (e.g., an HTTP webhook).
 * **The Observer:** Intercepts outbound SUT traffic (HTTP, Postgres, etc.) and matches it against expectations in the `.plan` file.
+* **Startup Plan:** A `startup.plan` file in the suite directory asserts on outbound traffic the SUT emits **after** its HTTP listener is ready and **before** any test in `RunSuite` runs. It may contain **only** `Expect` lines (no `Perform`). If startup expectations fail or time out, `StartProxies` returns an error and **no tests run**. See [docs/startup-plan.md](docs/startup-plan.md) and the example suite’s [example/tests/blackbox/startup.plan](example/tests/blackbox/startup.plan).
 * **Configuration:** Technical details (URLs, timeouts) live in `apis/*.json`. The DSL (`test.plan`) remains purely logical.
 * **Matching:** Outbound traffic is tied to the active test by **normalized full equality** between the resolved `expected_request` fixture and the actual payload (SQL: collapse whitespace and strip trailing `;`; HTTP: canonical JSON when valid). There is no separate correlation block for routing. **Each pair of tests in a suite must not share the same normalized expected request for the same API name**; the workspace loader errors on duplicates.
 * **Timeouts:** `dojo.config` timeouts mirror the DSL: `perform` (trigger call, default 5s) and `expect` (wait for outbound traffic, default 2s). Per-API `timeout` in `apis/*.json` overrides `expect` for that API. For real LLM suites, set `timeout: "30s"` (or higher) on the LLM API config.
@@ -67,7 +68,11 @@ After any change that touches the engine, workspace loader, proxies, adapters, e
 go run cmd/dojo/main.go ./example/tests/blackbox
 ```
 
+The example blackbox suite includes **`startup.plan`**, which expects the example SUT to call the mocked Gemini API once during boot (see `example/sut/main.go`). That exercises the startup phase end-to-end.
+
 All tests (including the example suite) must pass before considering a task complete. Unit tests alone are not sufficient — the example suite is the integration smoke test for the entire system.
+
+**README and suite-authoring guide:** Contributor overview in [readme.md](readme.md). The shipped reference for writing suites (and for using as a Cursor Agent Skill) is **[docs/dojo-skill.md](docs/dojo-skill.md)**. To activate it in Cursor, copy or symlink that file to `.cursor/skills/dojo/SKILL.md` in this repo or in a consumer repo. Do not add a second standalone `SKILL.md` at the repository root.
 
 ## 9. Communication
 * Do not explain basic programming concepts.

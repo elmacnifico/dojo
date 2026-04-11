@@ -1,0 +1,12 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "__dojo_startup_probe__"
+        }
+      ]
+    }
+  ]
+}

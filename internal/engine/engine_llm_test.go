@@ -354,7 +354,7 @@ Expect -> whatsapp -> Request: whatsapp_request.json
 	eng := engine.NewEngine(ws)
 
 
-	if err := eng.StartProxies(ctx, "suite"); err != nil {
+	if _, err := eng.StartProxies(ctx, "suite"); err != nil {
 		t.Fatalf("start proxies: %v", err)
 	}
 	defer eng.StopProxies()

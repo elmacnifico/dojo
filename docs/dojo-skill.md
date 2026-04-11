@@ -1,12 +1,15 @@
 ---
-name: use-dojo
+name: dojo
 description: >-
-  Write Dojo black-box test suites for a Software Under Test. Covers .plan DSL,
-  fixture files, apis/ config, dojo.config, entrypoints, deep-merge, and
-  matching rules. Use when creating or editing Dojo test suites, .plan files,
-  blackbox tests, or dojo fixtures.
+  Write and debug Dojo black-box suites: .plan DSL, startup.plan, apis/, dojo.config,
+  entrypoints, fixtures, deep-merge, matching. Use for Dojo engine work, example/tests/blackbox,
+  example/sut, or consumer repos (e.g. Proofcoach dojo/blackbox).
 ---
 # Writing Dojo Test Suites
+
+**Shipped with the repo (browse, share, vendor):** this file is **`docs/dojo-skill.md`**. It doubles as a Cursor Agent Skill (YAML frontmatter + Markdown body).
+
+**Optional — activate in Cursor:** copy or symlink this file to **`.cursor/skills/dojo/SKILL.md`** in the repo where you author suites (Dojo itself, or a consumer app). Cursor loads skills from that path; the copy in `docs/` stays the canonical version for GitHub and non-Cursor readers.
 
 Dojo is a black-box testing engine. It wraps your application (the SUT) in a
 transparent proxy: an **Initiator** sends requests to the SUT, and an
@@ -19,6 +22,7 @@ modify application code.
 ```text
 my_suite/
   dojo.config                       # SUT command, concurrency, timeouts
+  startup.plan                      # Optional: only Expect lines; runs after SUT is up, before any test
   apis/
     <api-name>.json                 # One file per external API (mock or live)
   entrypoints/
@@ -45,6 +49,10 @@ Key rules:
 - Each test directory has exactly one `.plan` file (any name, `.plan` extension).
 - Fixture files at both suite and test level with the same name are deep-merged.
 - `seed/` can exist at suite level (shared) and test level (per-test data).
+
+### `startup.plan` (optional)
+
+Suite root file **`startup.plan`** may contain **only** `Expect` lines (same syntax as in test plans). Dojo runs it after proxies and env are ready and the SUT accepts TCP, **before** any `RunSuite` test. If it fails, no tests run. Full behavior and logging: repo **`docs/startup-plan.md`**. Example: **`example/tests/blackbox/startup.plan`** and SUT probe in **`example/sut/main.go`**.
 
 ## dojo.config
 
@@ -659,9 +667,12 @@ go run cmd/dojo/main.go --format json -o results/ ./path/to/my_suite
 
 Dojo will:
 1. Read `dojo.config` and set proxy env vars.
-2. Boot the SUT as a child process.
-3. Run all tests concurrently (up to `concurrency`).
-4. Print the verdict and exit 0 (all pass) or 1 (any failure).
+2. Boot the SUT as a child process; wait for its HTTP listener if configured.
+3. If **`startup.plan`** exists at the suite root, satisfy those `Expect` lines before any test runs (failure aborts the whole suite).
+4. Run all tests concurrently (up to `concurrency`).
+5. Print the verdict and exit 0 (all pass) or 1 (any failure).
+
+After changing engine, workspace, proxies, or example SUT/fixtures, also run **`go test ./...`** from the Dojo module root.
 
 ## Checklist: Adding a New Test
 

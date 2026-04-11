@@ -90,7 +90,7 @@ Expect -> postgres -> Payload: ""
 	eng := engine.NewEngine(ws)
 
 
-	if err := eng.StartProxies(ctx, "test_suite"); err != nil {
+	if _, err := eng.StartProxies(ctx, "test_suite"); err != nil {
 		t.Fatalf("Failed to start proxies: %v", err)
 	}
 	defer eng.StopProxies()
@@ -144,7 +144,7 @@ Expect -> postgres -> Payload: ""
 	eng2 := engine.NewEngine(ws2)
 
 
-	if err := eng2.StartProxies(ctx, "test_suite"); err != nil {
+	if _, err := eng2.StartProxies(ctx, "test_suite"); err != nil {
 		t.Fatalf("Failed to start proxies 2: %v", err)
 	}
 	defer eng2.StopProxies()

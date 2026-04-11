@@ -192,6 +192,7 @@ type Suite struct {
 	Entrypoints map[string]EntrypointConfig
 	Tests       map[string]*Test
 	Eval        string
+	StartupPlan string
 }
 
 // Workspace encapsulates all discovered suites and global execution properties.
@@ -258,204 +259,227 @@ func LoadWorkspace(baseDir string) (*Workspace, error) {
 		configPath := filepath.Join(suitePath, "dojo.config")
 
 		if _, err := os.Stat(configPath); err == nil {
-			suite := &Suite{
-				APIs:        make(map[string]APIConfig),
-				Entrypoints: make(map[string]EntrypointConfig),
-				Tests:       make(map[string]*Test),
-			}
-			if err := loadJSON(configPath, &suite.Config); err != nil {
-				return nil, err
-			}
-			if err := validateSuiteConfig(e.Name(), &suite.Config); err != nil {
-				return nil, err
-			}
-
-			// Read Suite APIs
-			apisDir := filepath.Join(suitePath, "apis")
-			if apiEntries, err := os.ReadDir(apisDir); err == nil {
-				for _, apiE := range apiEntries {
-					if strings.HasSuffix(apiE.Name(), ".json") {
-						name := strings.TrimSuffix(apiE.Name(), ".json")
-						var cfg APIConfig
-						if err := loadJSON(filepath.Join(apisDir, apiE.Name()), &cfg); err != nil {
-							return nil, err
-						}
-						expandAPIConfig(&cfg)
-						if err := validateAPIConfig(name, &cfg); err != nil {
-							return nil, err
-						}
-						if err := resolvePayload(&cfg, suitePath, ""); err != nil {
-							return nil, err
-						}
-						suite.APIs[name] = cfg
-					}
-				}
-			}
-
-			// Read Suite Entrypoints
-			entrypointsDir := filepath.Join(suitePath, "entrypoints")
-			if epEntries, err := os.ReadDir(entrypointsDir); err == nil {
-				for _, epE := range epEntries {
-					if strings.HasSuffix(epE.Name(), ".json") {
-						name := strings.TrimSuffix(epE.Name(), ".json")
-						var cfg EntrypointConfig
-						if err := loadJSON(filepath.Join(entrypointsDir, epE.Name()), &cfg); err != nil {
-							return nil, err
-						}
-						expandEntrypointConfig(&cfg)
-						if err := validateEntrypointConfig(name, &cfg); err != nil {
-							return nil, err
-						}
-
-						// Load expected response fixture if provided
-						if cfg.ExpectedResponse != nil {
-							if cfg.ExpectedResponse.File != "" {
-								b, err := os.ReadFile(filepath.Join(suitePath, cfg.ExpectedResponse.File))
-								if err != nil {
-									return nil, fmt.Errorf("failed to read entrypoint expected response %s: %w", cfg.ExpectedResponse.File, err)
-								}
-								cfg.ExpectedResponse.Payload = b
-							} else if cfg.ExpectedResponse.Body != "" {
-								cfg.ExpectedResponse.Payload = []byte(cfg.ExpectedResponse.Body)
-							}
-						}
-
-						suite.Entrypoints[name] = cfg
-					}
-				}
-			}
-
-			// Read Suite Eval
-			if b, err := os.ReadFile(filepath.Join(suitePath, "eval.md")); err == nil {
-				suite.Eval = strings.TrimSpace(string(b))
-			}
-
-			// Read Tests
-			testEntries, err := os.ReadDir(suitePath)
+			suite, err := loadSuite(ws, suitePath, e.Name())
 			if err != nil {
-				return nil, fmt.Errorf("reading suite directory %s: %w", suitePath, err)
+				return nil, err
 			}
-			for _, te := range testEntries {
-				if te.IsDir() && strings.HasPrefix(te.Name(), "test_") {
-						testPath := filepath.Join(suitePath, te.Name())
-						test := &Test{
-							APIs:        make(map[string]APIConfig),
-							Entrypoints: make(map[string]EntrypointConfig),
-						}
-
-						// Read Test APIs overrides
-						testAPIsDir := filepath.Join(testPath, "apis")
-						if tapEntries, err := os.ReadDir(testAPIsDir); err == nil {
-							for _, tae := range tapEntries {
-								if strings.HasSuffix(tae.Name(), ".json") {
-									name := strings.TrimSuffix(tae.Name(), ".json")
-									var cfg APIConfig
-									if suiteCfg, ok := suite.APIs[name]; ok {
-										cfg = CopyAPIConfig(suiteCfg)
-									}
-									if err := loadJSON(filepath.Join(testAPIsDir, tae.Name()), &cfg); err != nil {
-										return nil, err
-									}
-								expandAPIConfig(&cfg)
-								if err := validateAPIConfig(name, &cfg); err != nil {
-									return nil, fmt.Errorf("in test %s: %w", te.Name(), err)
-								}
-								if err := resolvePayload(&cfg, testPath, suitePath); err != nil {
-									return nil, fmt.Errorf("in test %s api %s: %w", te.Name(), name, err)
-								}
-								test.APIs[name] = cfg
-								}
-							}
-						}
-
-						// Read Test Entrypoint overrides
-						testEPDir := filepath.Join(testPath, "entrypoints")
-						if epEntries, err := os.ReadDir(testEPDir); err == nil {
-							for _, epe := range epEntries {
-								if strings.HasSuffix(epe.Name(), ".json") {
-									name := strings.TrimSuffix(epe.Name(), ".json")
-									var cfg EntrypointConfig
-									if suiteCfg, ok := suite.Entrypoints[name]; ok {
-										cfg = CopyEntrypointConfig(suiteCfg)
-									}
-									if err := loadJSON(filepath.Join(testEPDir, epe.Name()), &cfg); err != nil {
-										return nil, err
-									}
-									expandEntrypointConfig(&cfg)
-									if err := validateEntrypointConfig(name, &cfg); err != nil {
-										return nil, fmt.Errorf("in test %s: %w", te.Name(), err)
-									}
-									test.Entrypoints[name] = cfg
-								}
-							}
-						}
-
-						// Read Test Plan
-						planFiles, err := filepath.Glob(filepath.Join(testPath, "*.plan"))
-						if err != nil || len(planFiles) == 0 {
-							return nil, fmt.Errorf("missing .plan file in %s", testPath)
-						}
-						if len(planFiles) > 1 {
-							return nil, fmt.Errorf("multiple .plan files found in %s, please provide only one", testPath)
-						}
-
-						planPath := planFiles[0]
-						planName := filepath.Base(planPath)
-
-						planBytes, err := os.ReadFile(planPath)
-						if err != nil {
-							return nil, fmt.Errorf("failed to read plan file %s: %w", planPath, err)
-						}
-						planStr := string(planBytes)
-						parsedPlan, err := ParsePlan(planStr)
-						if err != nil {
-							return nil, fmt.Errorf("failed to parse %s in %s: %w", planName, testPath, err)
-						}
-						if len(parsedPlan.Lines) == 0 {
-							return nil, fmt.Errorf("%s in %s is empty", planName, testPath)
-						}
-						if strings.ToLower(parsedPlan.Lines[0].Action) != "perform" {
-							return nil, fmt.Errorf("%s in %s must start with 'Perform'", planName, testPath)
-						}
-						test.Plan = planStr
-
-						// Wire fixtures from plan clauses into API configs.
-						if err := wireFixturesFromPlan(parsedPlan, test, suite, testPath, suitePath); err != nil {
-							return nil, fmt.Errorf("in test %s: %w", te.Name(), err)
-						}
-
-					inheritedEval := suite.Eval
-					if inheritedEval == "" {
-						inheritedEval = ws.GlobalEval
-					}
-
-					evalPath := filepath.Join(testPath, "eval.md")
-					if b, err := os.ReadFile(evalPath); err == nil {
-						content := strings.TrimSpace(string(b))
-						if strings.HasPrefix(content, "+") {
-							test.Eval = inheritedEval + "\n" + strings.TrimSpace(strings.TrimPrefix(content, "+"))
-						} else {
-							test.Eval = content
-						}
-					} else {
-						test.Eval = inheritedEval
-					}
-
-						suite.Tests[te.Name()] = test
-				}
-			}
-
-			if suite.Config.Concurrency > 1 {
-				if err := ValidateUniqueExpectedRequests(suite); err != nil {
-					return nil, fmt.Errorf("suite %s: %w", e.Name(), err)
-				}
-			}
-
 			ws.Suites[e.Name()] = suite
 		}
 	}
 
 	return ws, nil
+}
+
+func loadSuite(ws *Workspace, suitePath, suiteName string) (*Suite, error) {
+	suite := &Suite{
+		APIs:        make(map[string]APIConfig),
+		Entrypoints: make(map[string]EntrypointConfig),
+		Tests:       make(map[string]*Test),
+	}
+	configPath := filepath.Join(suitePath, "dojo.config")
+	if err := loadJSON(configPath, &suite.Config); err != nil {
+		return nil, err
+	}
+	if err := validateSuiteConfig(suiteName, &suite.Config); err != nil {
+		return nil, err
+	}
+
+	// Read Startup Plan
+	startupPlanPath := filepath.Join(suitePath, "startup.plan")
+	if b, err := os.ReadFile(startupPlanPath); err == nil {
+		suite.StartupPlan = string(b)
+	}
+
+	// Read Suite APIs
+	apisDir := filepath.Join(suitePath, "apis")
+	if apiEntries, err := os.ReadDir(apisDir); err == nil {
+		for _, apiE := range apiEntries {
+			if strings.HasSuffix(apiE.Name(), ".json") {
+				name := strings.TrimSuffix(apiE.Name(), ".json")
+				var cfg APIConfig
+				if err := loadJSON(filepath.Join(apisDir, apiE.Name()), &cfg); err != nil {
+					return nil, err
+				}
+				expandAPIConfig(&cfg)
+				if err := validateAPIConfig(name, &cfg); err != nil {
+					return nil, err
+				}
+				if err := resolvePayload(&cfg, suitePath, ""); err != nil {
+					return nil, err
+				}
+				suite.APIs[name] = cfg
+			}
+		}
+	}
+
+	// Read Suite Entrypoints
+	entrypointsDir := filepath.Join(suitePath, "entrypoints")
+	if epEntries, err := os.ReadDir(entrypointsDir); err == nil {
+		for _, epE := range epEntries {
+			if strings.HasSuffix(epE.Name(), ".json") {
+				name := strings.TrimSuffix(epE.Name(), ".json")
+				var cfg EntrypointConfig
+				if err := loadJSON(filepath.Join(entrypointsDir, epE.Name()), &cfg); err != nil {
+					return nil, err
+				}
+				expandEntrypointConfig(&cfg)
+				if err := validateEntrypointConfig(name, &cfg); err != nil {
+					return nil, err
+				}
+
+				// Load expected response fixture if provided
+				if cfg.ExpectedResponse != nil {
+					if cfg.ExpectedResponse.File != "" {
+						b, err := os.ReadFile(filepath.Join(suitePath, cfg.ExpectedResponse.File))
+						if err != nil {
+							return nil, fmt.Errorf("failed to read entrypoint expected response %s: %w", cfg.ExpectedResponse.File, err)
+						}
+						cfg.ExpectedResponse.Payload = b
+					} else if cfg.ExpectedResponse.Body != "" {
+						cfg.ExpectedResponse.Payload = []byte(cfg.ExpectedResponse.Body)
+					}
+				}
+
+				suite.Entrypoints[name] = cfg
+			}
+		}
+	}
+
+	// Read Suite Eval
+	if b, err := os.ReadFile(filepath.Join(suitePath, "eval.md")); err == nil {
+		suite.Eval = strings.TrimSpace(string(b))
+	}
+
+	// Read Tests
+	testEntries, err := os.ReadDir(suitePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading suite directory %s: %w", suitePath, err)
+	}
+	for _, te := range testEntries {
+		if te.IsDir() && strings.HasPrefix(te.Name(), "test_") {
+			test, err := loadTest(ws, suite, suitePath, te.Name())
+			if err != nil {
+				return nil, err
+			}
+			suite.Tests[te.Name()] = test
+		}
+	}
+
+	if suite.Config.Concurrency > 1 {
+		if err := ValidateUniqueExpectedRequests(suite); err != nil {
+			return nil, fmt.Errorf("suite %s: %w", suiteName, err)
+		}
+	}
+
+	return suite, nil
+}
+
+func loadTest(ws *Workspace, suite *Suite, suitePath, testName string) (*Test, error) {
+	testPath := filepath.Join(suitePath, testName)
+	test := &Test{
+		APIs:        make(map[string]APIConfig),
+		Entrypoints: make(map[string]EntrypointConfig),
+	}
+
+	// Read Test APIs overrides
+	testAPIsDir := filepath.Join(testPath, "apis")
+	if tapEntries, err := os.ReadDir(testAPIsDir); err == nil {
+		for _, tae := range tapEntries {
+			if strings.HasSuffix(tae.Name(), ".json") {
+				name := strings.TrimSuffix(tae.Name(), ".json")
+				var cfg APIConfig
+				if suiteCfg, ok := suite.APIs[name]; ok {
+					cfg = CopyAPIConfig(suiteCfg)
+				}
+				if err := loadJSON(filepath.Join(testAPIsDir, tae.Name()), &cfg); err != nil {
+					return nil, err
+				}
+				expandAPIConfig(&cfg)
+				if err := validateAPIConfig(name, &cfg); err != nil {
+					return nil, fmt.Errorf("in test %s: %w", testName, err)
+				}
+				if err := resolvePayload(&cfg, testPath, suitePath); err != nil {
+					return nil, fmt.Errorf("in test %s api %s: %w", testName, name, err)
+				}
+				test.APIs[name] = cfg
+			}
+		}
+	}
+
+	// Read Test Entrypoint overrides
+	testEPDir := filepath.Join(testPath, "entrypoints")
+	if epEntries, err := os.ReadDir(testEPDir); err == nil {
+		for _, epe := range epEntries {
+			if strings.HasSuffix(epe.Name(), ".json") {
+				name := strings.TrimSuffix(epe.Name(), ".json")
+				var cfg EntrypointConfig
+				if suiteCfg, ok := suite.Entrypoints[name]; ok {
+					cfg = CopyEntrypointConfig(suiteCfg)
+				}
+				if err := loadJSON(filepath.Join(testEPDir, epe.Name()), &cfg); err != nil {
+					return nil, err
+				}
+				expandEntrypointConfig(&cfg)
+				if err := validateEntrypointConfig(name, &cfg); err != nil {
+					return nil, fmt.Errorf("in test %s: %w", testName, err)
+				}
+				test.Entrypoints[name] = cfg
+			}
+		}
+	}
+
+	// Read Test Plan
+	planFiles, err := filepath.Glob(filepath.Join(testPath, "*.plan"))
+	if err != nil || len(planFiles) == 0 {
+		return nil, fmt.Errorf("missing .plan file in %s", testPath)
+	}
+	if len(planFiles) > 1 {
+		return nil, fmt.Errorf("multiple .plan files found in %s, please provide only one", testPath)
+	}
+
+	planPath := planFiles[0]
+	planName := filepath.Base(planPath)
+
+	planBytes, err := os.ReadFile(planPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read plan file %s: %w", planPath, err)
+	}
+	planStr := string(planBytes)
+	parsedPlan, err := ParsePlan(planStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse %s in %s: %w", planName, testPath, err)
+	}
+	if len(parsedPlan.Lines) == 0 {
+		return nil, fmt.Errorf("%s in %s is empty", planName, testPath)
+	}
+	if strings.ToLower(parsedPlan.Lines[0].Action) != "perform" {
+		return nil, fmt.Errorf("%s in %s must start with 'Perform'", planName, testPath)
+	}
+	test.Plan = planStr
+
+	// Wire fixtures from plan clauses into API configs.
+	if err := WireFixturesFromPlan(parsedPlan, test, suite, testPath, suitePath); err != nil {
+		return nil, fmt.Errorf("in test %s: %w", testName, err)
+	}
+
+	inheritedEval := suite.Eval
+	if inheritedEval == "" {
+		inheritedEval = ws.GlobalEval
+	}
+
+	evalPath := filepath.Join(testPath, "eval.md")
+	if b, err := os.ReadFile(evalPath); err == nil {
+		content := strings.TrimSpace(string(b))
+		if strings.HasPrefix(content, "+") {
+			test.Eval = inheritedEval + "\n" + strings.TrimSpace(strings.TrimPrefix(content, "+"))
+		} else {
+			test.Eval = content
+		}
+	} else {
+		test.Eval = inheritedEval
+	}
+
+	return test, nil
 }
 
 // CopyAPIConfig returns a deep copy of an APIConfig, cloning all pointer fields,
@@ -531,7 +555,7 @@ func CopyEntrypointConfig(src EntrypointConfig) EntrypointConfig {
 	return dst
 }
 
-// wireFixturesFromPlan reads Request and Respond clauses from the parsed plan
+// WireFixturesFromPlan reads Request and Respond clauses from the parsed plan
 // and wires them into the test's [APIConfig] entries. For each Expect line, the
 // API config is copied from the suite when the test does not already have an
 // override. Fixture payloads are resolved via [resolvePayload] (test dir first,
@@ -539,7 +563,7 @@ func CopyEntrypointConfig(src EntrypointConfig) EntrypointConfig {
 //
 // Multiple Expect lines for the same API produce ordered expectations: the
 // engine matches them in declaration order against incoming requests.
-func wireFixturesFromPlan(doc *ParsedDocument, test *Test, suite *Suite, testPath, suitePath string) error {
+func WireFixturesFromPlan(doc *ParsedDocument, test *Test, suite *Suite, testPath, suitePath string) error {
 	for _, line := range doc.Lines {
 		if strings.ToLower(line.Action) != "expect" {
 			continue

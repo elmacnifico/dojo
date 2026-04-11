@@ -37,6 +37,13 @@ func WithVerbose(v bool) EngineOption {
 	}
 }
 
+// StartupPhaseReport describes the outcome of an optional startup.plan phase
+// for console or summary reporting. When Ran is false, DurationMs is zero.
+type StartupPhaseReport struct {
+	Ran        bool
+	DurationMs int64
+}
+
 // Engine encapsulates the core Dojo logic for running a Suite.
 type Engine struct {
 	Workspace     *workspace.Workspace
@@ -50,10 +57,10 @@ type Engine struct {
 
 	sutDead     atomic.Bool
 	sutDeadCh   chan struct{} // closed when SUT crashes; used to unblock waiting tests
-	sutDeadOnce sync.Once    // prevents double-close panic on sutDeadCh
+	sutDeadOnce sync.Once     // prevents double-close panic on sutDeadCh
 	sutDoneCh   chan struct{} // closed when SUT goroutine returns (normal or crash)
-	sutErr      atomic.Value // stores error
-	sutOutput   atomic.Value // stores string
+	sutErr      atomic.Value  // stores error
+	sutOutput   atomic.Value  // stores string
 }
 
 // SUTError returns the SUT crash error if the process exited unexpectedly.
@@ -86,13 +93,17 @@ func NewEngine(ws *workspace.Workspace, opts ...EngineOption) *Engine {
 }
 
 // StartProxies boots all global/suite-level interceptors.
-func (e *Engine) StartProxies(ctx context.Context, suiteName string) error {
+// When the suite has a startup.plan, the returned report has Ran set and
+// DurationMs set to the wall time spent waiting for startup expectations.
+func (e *Engine) StartProxies(ctx context.Context, suiteName string) (StartupPhaseReport, error) {
 	suite, ok := e.Workspace.Suites[suiteName]
 	if !ok {
-		return fmt.Errorf("suite '%s' not found", suiteName)
+		return StartupPhaseReport{}, fmt.Errorf("suite '%s' not found", suiteName)
 	}
 	suite.Config.Timeouts.ResolveDefaults()
 	e.ActiveSuite = suite
+
+	var startupReport StartupPhaseReport
 
 	hasPostgres := false
 	livePostgres := false
@@ -107,11 +118,11 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) error {
 	}
 
 	if err := e.checkSeedRequiresLiveDB(filepath.Join(e.Workspace.BaseDir, suiteName, "seed"), livePostgres); err != nil {
-		return err
+		return StartupPhaseReport{}, err
 	}
 	for testID := range suite.Tests {
 		if err := e.checkSeedRequiresLiveDB(filepath.Join(e.Workspace.BaseDir, suiteName, testID, "seed"), livePostgres); err != nil {
-			return err
+			return StartupPhaseReport{}, err
 		}
 	}
 
@@ -119,7 +130,7 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) error {
 		e.HTTPProxy.UpstreamTimeout = suite.Config.Timeouts.Perform.Duration
 	}
 	if err := e.HTTPProxy.Start(ctx, "127.0.0.1:0", e); err != nil {
-		return fmt.Errorf("failed to start HTTP Proxy: %w", err)
+		return StartupPhaseReport{}, fmt.Errorf("failed to start HTTP Proxy: %w", err)
 	}
 
 	if hasPostgres {
@@ -130,12 +141,12 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) error {
 		}
 
 		if err := e.PostgresProxy.Start(ctx, "127.0.0.1:0", e); err != nil {
-			return fmt.Errorf("failed to start Postgres Proxy: %w", err)
+			return StartupPhaseReport{}, fmt.Errorf("failed to start Postgres Proxy: %w", err)
 		}
 
 		if livePostgres {
 			if err := e.runSeeds(e.PostgresProxy.LiveURL, filepath.Join(e.Workspace.BaseDir, suiteName, "seed")); err != nil {
-				return fmt.Errorf("suite seeding failed: %w", err)
+				return StartupPhaseReport{}, fmt.Errorf("suite seeding failed: %w", err)
 			}
 		}
 	}
@@ -154,6 +165,29 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) error {
 	if suite.Config.SutCommand != "" {
 		sutCtx, cancel := context.WithCancel(ctx)
 		e.sutCancel = cancel
+
+		var startupTest *ActiveTest
+		if suite.StartupPlan != "" {
+			e.log.Debug("startup plan: preparing expectations",
+				"suite", suiteName,
+				"plan_bytes", len(suite.StartupPlan),
+			)
+			st, err := e.prepareStartupPlan(ctx, suite, suiteName)
+			if err != nil {
+				e.sutCancel()
+				return StartupPhaseReport{}, fmt.Errorf("failed to prepare startup plan: %w", err)
+			}
+			startupTest = st
+			n := 0
+			for _, exps := range startupTest.Expectations {
+				n += len(exps)
+			}
+			e.log.Debug("startup plan: registered; starting SUT, then waiting for outbound traffic",
+				"suite", suiteName,
+				"expectations", n,
+			)
+			e.Registry.Register("startup", startupTest)
+		}
 
 		suiteDir := filepath.Join(e.Workspace.BaseDir, suiteName)
 		runner := NewSUTRunner(suite.Config.SutCommand, suiteDir)
@@ -185,12 +219,30 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) error {
 		if tcpAddr := inferSUTListenTCPAddr(suite); tcpAddr != "" {
 			if err := pollTCPDialReady(waitCtx, tcpAddr, suite.Config.Timeouts.TCPPollInterval.Duration, suite.Config.Timeouts.TCPDialTimeout.Duration); err != nil {
 				e.sutCancel()
-				return fmt.Errorf("waiting for SUT TCP listener on %s: %w", tcpAddr, err)
+				return StartupPhaseReport{}, fmt.Errorf("waiting for SUT TCP listener on %s: %w", tcpAddr, err)
 			}
+		}
+
+		if startupTest != nil {
+			e.log.Debug("startup plan: SUT is up; awaiting expectations (same timeouts as test Expect phase)",
+				"suite", suiteName,
+			)
+			t0 := time.Now()
+			if err := e.awaitPhaseExpectations(ctx, startupTest); err != nil {
+				e.log.Error("startup plan failed", "suite", suiteName, "error", err)
+				e.Registry.Unregister("startup")
+				e.sutCancel()
+				return StartupPhaseReport{}, fmt.Errorf("startup plan failed: %w", err)
+			}
+			startupReport = StartupPhaseReport{
+				Ran:        true,
+				DurationMs: time.Since(t0).Milliseconds(),
+			}
+			e.Registry.Unregister("startup")
 		}
 	}
 
-	return nil
+	return startupReport, nil
 }
 
 func inferSUTListenTCPAddr(suite *workspace.Suite) string {

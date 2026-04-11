@@ -84,7 +84,7 @@ Expect -> stripe -> Payload: ""
 	eng := engine.NewEngine(ws)
 
 
-	if err := eng.StartProxies(context.Background(), "test_suite"); err != nil {
+	if _, err := eng.StartProxies(context.Background(), "test_suite"); err != nil {
 		t.Fatalf("Failed to start proxies: %v", err)
 	}
 	defer eng.StopProxies()
@@ -185,7 +185,7 @@ Expect -> stripe -> Payload: ""
 	eng := engine.NewEngine(ws)
 
 
-	if err := eng.StartProxies(context.Background(), "test_suite"); err != nil {
+	if _, err := eng.StartProxies(context.Background(), "test_suite"); err != nil {
 		t.Fatalf("Failed to start proxies: %v", err)
 	}
 	defer eng.StopProxies()
@@ -277,7 +277,7 @@ Expect -> stripe -> Payload: ""
 	eng := engine.NewEngine(ws)
 
 
-	if err := eng.StartProxies(context.Background(), "test_suite"); err != nil {
+	if _, err := eng.StartProxies(context.Background(), "test_suite"); err != nil {
 		t.Fatalf("start proxies: %v", err)
 	}
 	defer eng.StopProxies()
@@ -880,7 +880,7 @@ Expect -> notify
 	eng := engine.NewEngine(ws)
 
 
-	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+	if _, err := eng.StartProxies(context.Background(), "suite"); err != nil {
 		t.Fatalf("StartProxies: %v", err)
 	}
 	defer eng.StopProxies()
@@ -906,7 +906,7 @@ Expect -> notify
 func TestStartProxies_SuiteNotFound(t *testing.T) {
 	t.Parallel()
 	eng := engine.NewEngine(&workspace.Workspace{Suites: map[string]*workspace.Suite{}})
-	err := eng.StartProxies(context.Background(), "nonexistent")
+	_, err := eng.StartProxies(context.Background(), "nonexistent")
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("expected suite not found error, got: %v", err)
 	}
@@ -1144,7 +1144,7 @@ Expect -> vision -> Request: vision_request.json
 	eng := engine.NewEngine(ws)
 
 
-	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+	if _, err := eng.StartProxies(context.Background(), "suite"); err != nil {
 		t.Fatalf("StartProxies: %v", err)
 	}
 	defer eng.StopProxies()
@@ -1251,7 +1251,7 @@ func main() {
 	}
 
 	eng := engine.NewEngine(ws)
-	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+	if _, err := eng.StartProxies(context.Background(), "suite"); err != nil {
 		t.Fatalf("StartProxies: %v", err)
 	}
 	defer eng.StopProxies()
@@ -1306,7 +1306,7 @@ func TestMismatchErrorPopulatesStructuredFields(t *testing.T) {
 	}
 
 	eng := engine.NewEngine(ws)
-	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+	if _, err := eng.StartProxies(context.Background(), "suite"); err != nil {
 		t.Fatalf("StartProxies: %v", err)
 	}
 	defer eng.StopProxies()
@@ -1388,7 +1388,7 @@ func TestEnvVarExpansionInMockResponse(t *testing.T) {
 	}
 
 	eng := engine.NewEngine(ws)
-	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+	if _, err := eng.StartProxies(context.Background(), "suite"); err != nil {
 		t.Fatalf("StartProxies: %v", err)
 	}
 	defer eng.StopProxies()
@@ -1458,7 +1458,7 @@ func TestMockResponseContentType(t *testing.T) {
 	}
 
 	eng := engine.NewEngine(ws)
-	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+	if _, err := eng.StartProxies(context.Background(), "suite"); err != nil {
 		t.Fatalf("StartProxies: %v", err)
 	}
 	defer eng.StopProxies()
@@ -1527,7 +1527,7 @@ func TestExpectStatus(t *testing.T) {
 	}
 
 	eng := engine.NewEngine(ws)
-	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+	if _, err := eng.StartProxies(context.Background(), "suite"); err != nil {
 		t.Fatalf("StartProxies: %v", err)
 	}
 	defer eng.StopProxies()
@@ -1593,7 +1593,7 @@ func TestFollowRedirects(t *testing.T) {
 	}
 
 	eng := engine.NewEngine(ws)
-	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+	if _, err := eng.StartProxies(context.Background(), "suite"); err != nil {
 		t.Fatalf("StartProxies: %v", err)
 	}
 	defer eng.StopProxies()
@@ -1636,7 +1636,7 @@ func TestExpectTimeout_PerAPITimeout(t *testing.T) {
 	}
 
 	eng := engine.NewEngine(ws)
-	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+	if _, err := eng.StartProxies(context.Background(), "suite"); err != nil {
 		t.Fatalf("StartProxies: %v", err)
 	}
 	defer eng.StopProxies()
@@ -1691,7 +1691,7 @@ func TestExpectTimeout_GlobalFallback(t *testing.T) {
 	}
 
 	eng := engine.NewEngine(ws)
-	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+	if _, err := eng.StartProxies(context.Background(), "suite"); err != nil {
 		t.Fatalf("StartProxies: %v", err)
 	}
 	defer eng.StopProxies()
@@ -1764,7 +1764,7 @@ func TestExpectTimeout_IndependentFailure(t *testing.T) {
 	}
 
 	eng := engine.NewEngine(ws)
-	if err := eng.StartProxies(context.Background(), "suite"); err != nil {
+	if _, err := eng.StartProxies(context.Background(), "suite"); err != nil {
 		t.Fatalf("StartProxies: %v", err)
 	}
 	defer eng.StopProxies()

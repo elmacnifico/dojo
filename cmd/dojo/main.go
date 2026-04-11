@@ -118,7 +118,8 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
 	eng := engine.NewEngine(ws, engine.WithLogger(logger), engine.WithVerbose(verbose))
 
-	if err := eng.StartProxies(ctx, suiteName); err != nil {
+	startupReport, err := eng.StartProxies(ctx, suiteName)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start proxies: %v\n", err)
 		os.Exit(1)
 	}
@@ -131,6 +132,9 @@ func main() {
 	if format == "console" {
 		fmt.Printf("\n--- RUNNING SUITE: %s (%d tests, concurrency %d) ---\n\n",
 			suiteName, len(suite.Tests), suite.Config.Concurrency)
+		if startupReport.Ran {
+			fmt.Printf("  PASS  startup.plan  (%s)\n", formatDuration(startupReport.DurationMs))
+		}
 	}
 
 	var printMu sync.Mutex

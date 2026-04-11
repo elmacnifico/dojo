@@ -7,8 +7,8 @@
 *.test
 *.out
 
-# Compiled binary
-dojo
+# Compiled binary at repository root only (avoid ignoring cmd/dojo or .cursor/skills/dojo)
+/dojo
 
 # Test outputs
 coverage.out
@@ -23,6 +23,7 @@ Icon
 # Editor directories and files
 .idea
 .vscode
+.cursor/
 *.swp
 *.swo
 
