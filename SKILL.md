@@ -53,13 +53,13 @@ Minimal JSON file at the suite root:
 ```json
 {
   "concurrency": 4,
-  "sut_command": "go run ./cmd/myapp/main.go"
+  "sut_command": "go build -o /tmp/myapp-sut ./cmd/myapp/main.go && exec /tmp/myapp-sut"
 }
 ```
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `sut_command` | yes | Shell command to start the SUT. Dojo sets env vars so the SUT routes traffic through Dojo's proxies. |
+| `sut_command` | yes | Shell command to start the SUT. Dojo sets env vars so the SUT routes traffic through Dojo's proxies.<br><br>**Golang Best Practice:** Avoid `go run` as it spawns child processes that can become orphaned when Dojo sends a termination signal, leading to port conflicts. Instead, compile and `exec` the binary: `"go build -o /tmp/sut ./main.go && exec /tmp/sut"`. |
 | `concurrency` | no | Max parallel test workers (default 1, clamped to >= 1). |
 | `evaluator` | no | AI evaluation config (see below). |
 | `timeouts` | no | Override default timeouts (see below). |

@@ -777,6 +777,8 @@ Dojo will:
 2. Read `dojo.config` and configure environment variables to route SUT traffic
    through Dojo's local proxies.
 3. Boot your application as a child process (when `sut_command` is set).
+   *Note for Go projects: Avoid using `go run` as your `sut_command`. `go run` spawns a child process for the binary, which can become orphaned when Dojo sends a termination signal, leading to port conflicts on subsequent runs. Instead, compile and `exec` the binary:*
+   `"sut_command": "go build -o /tmp/sut-bin ./main.go && exec /tmp/sut-bin"`
 4. Spin up concurrent test workers (up to the configured `concurrency` limit).
 5. Execute all `Perform` triggers and wait for `Expect` matches.
 6. Tear down the application and print the verdict (pass `--output` to write
