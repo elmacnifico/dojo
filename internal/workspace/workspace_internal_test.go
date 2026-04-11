@@ -366,6 +366,40 @@ func TestWireFixturesFromPlan(t *testing.T) {
 			t.Errorf("test extra key missing: %v", m)
 		}
 	})
+
+	t.Run("envelope fixture splits headers and body", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		envelope := `{"headers":{"Authorization":"Bearer test_tok"},"body":"action=getmeas"}`
+		if err := os.WriteFile(filepath.Join(dir, "withings_request.json"), []byte(envelope), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		suite := &Suite{APIs: map[string]APIConfig{
+			"withings": {Mode: "mock", URL: "/v1/meas"},
+		}}
+		test := &Test{APIs: make(map[string]APIConfig)}
+		doc := &ParsedDocument{Lines: []ParsedLine{
+			{Action: "Perform", Target: "entrypoints/webhook"},
+			{Action: "Expect", Target: "withings", Clauses: []ParsedClause{
+				{Key: "Request", Value: strPtr("withings_request.json")},
+			}},
+		}}
+
+		if err := WireFixturesFromPlan(doc, test, suite, dir, ""); err != nil {
+			t.Fatal(err)
+		}
+		cfg := test.APIs["withings"]
+		if cfg.ExpectedRequest == nil || string(cfg.ExpectedRequest.Payload) != "action=getmeas" {
+			t.Errorf("expected body 'action=getmeas', got %q", string(cfg.ExpectedRequest.Payload))
+		}
+		if cfg.ExpectedHeaders == nil {
+			t.Fatal("expected ExpectedHeaders to be set from envelope")
+		}
+		if string(cfg.ExpectedHeaders.Payload) != `{"Authorization":"Bearer test_tok"}` {
+			t.Errorf("expected headers JSON, got %q", string(cfg.ExpectedHeaders.Payload))
+		}
+	})
 }
 
 func strPtr(s string) *string { return &s }
@@ -816,6 +850,169 @@ func TestValidateUniqueExpectedRequests(t *testing.T) {
 		}
 		if err := ValidateUniqueExpectedRequests(suite); err != nil {
 			t.Fatal(err)
+		}
+	})
+	t.Run("same body different headers ok", func(t *testing.T) {
+		t.Parallel()
+		body := []byte("action=getmeas")
+		suite := &Suite{
+			Tests: map[string]*Test{
+				"test_a": {APIs: map[string]APIConfig{
+					"withings": {Mode: "mock",
+						ExpectedRequest: &PayloadSpec{Payload: body},
+						ExpectedHeaders: &PayloadSpec{Payload: []byte(`{"Authorization":"Bearer token_A"}`)},
+					},
+				}},
+				"test_b": {APIs: map[string]APIConfig{
+					"withings": {Mode: "mock",
+						ExpectedRequest: &PayloadSpec{Payload: body},
+						ExpectedHeaders: &PayloadSpec{Payload: []byte(`{"Authorization":"Bearer token_B"}`)},
+					},
+				}},
+			},
+		}
+		if err := ValidateUniqueExpectedRequests(suite); err != nil {
+			t.Fatalf("same body with different headers should be unique: %v", err)
+		}
+	})
+	t.Run("same path same api fails", func(t *testing.T) {
+		t.Parallel()
+		suite := &Suite{
+			Tests: map[string]*Test{
+				"test_a": {APIs: map[string]APIConfig{
+					"download": {Mode: "mock", URL: "/mock",
+						OrderedExpectations: []ExpectationSpec{{Path: "/food1.jpeg"}},
+					},
+				}},
+				"test_b": {APIs: map[string]APIConfig{
+					"download": {Mode: "mock", URL: "/mock",
+						OrderedExpectations: []ExpectationSpec{{Path: "/food1.jpeg"}},
+					},
+				}},
+			},
+		}
+		if err := ValidateUniqueExpectedRequests(suite); err == nil {
+			t.Fatal("expected error for duplicate path on same API")
+		}
+	})
+	t.Run("same api different paths ok", func(t *testing.T) {
+		t.Parallel()
+		suite := &Suite{
+			Tests: map[string]*Test{
+				"test_a": {APIs: map[string]APIConfig{
+					"download": {Mode: "mock", URL: "/mock",
+						OrderedExpectations: []ExpectationSpec{{Path: "/food1.jpeg"}},
+					},
+				}},
+				"test_b": {APIs: map[string]APIConfig{
+					"download": {Mode: "mock", URL: "/mock",
+						OrderedExpectations: []ExpectationSpec{{Path: "/food2.jpeg"}},
+					},
+				}},
+			},
+		}
+		if err := ValidateUniqueExpectedRequests(suite); err != nil {
+			t.Fatalf("different paths should be unique: %v", err)
+		}
+	})
+}
+
+func TestSplitEnvelope(t *testing.T) {
+	t.Parallel()
+
+	t.Run("string body", func(t *testing.T) {
+		t.Parallel()
+		data := []byte(`{"headers":{"Authorization":"Bearer tok"},"body":"action=getmeas"}`)
+		body, hdrs, ok := SplitEnvelope(data)
+		if !ok {
+			t.Fatal("expected envelope detection")
+		}
+		if string(body) != "action=getmeas" {
+			t.Errorf("body: got %q", string(body))
+		}
+		if string(hdrs) != `{"Authorization":"Bearer tok"}` {
+			t.Errorf("headers: got %q", string(hdrs))
+		}
+	})
+
+	t.Run("json body", func(t *testing.T) {
+		t.Parallel()
+		data := []byte(`{"headers":{"X-Key":"val"},"body":{"to":"123"}}`)
+		body, hdrs, ok := SplitEnvelope(data)
+		if !ok {
+			t.Fatal("expected envelope detection")
+		}
+		if string(body) != `{"to":"123"}` {
+			t.Errorf("body: got %q", string(body))
+		}
+		if string(hdrs) != `{"X-Key":"val"}` {
+			t.Errorf("headers: got %q", string(hdrs))
+		}
+	})
+
+	t.Run("plain json not envelope", func(t *testing.T) {
+		t.Parallel()
+		data := []byte(`{"to":"491234500700","type":"text"}`)
+		body, _, ok := SplitEnvelope(data)
+		if ok {
+			t.Fatal("plain JSON should NOT be detected as envelope")
+		}
+		if string(body) != string(data) {
+			t.Errorf("body should be unchanged: got %q", string(body))
+		}
+	})
+
+	t.Run("plain text not envelope", func(t *testing.T) {
+		t.Parallel()
+		data := []byte("grant_type=refresh_token")
+		body, _, ok := SplitEnvelope(data)
+		if ok {
+			t.Fatal("plain text should NOT be detected as envelope")
+		}
+		if string(body) != string(data) {
+			t.Errorf("body should be unchanged: got %q", string(body))
+		}
+	})
+
+	t.Run("wildcard body", func(t *testing.T) {
+		t.Parallel()
+		data := []byte(`{"headers":{"Authorization":"Bearer tok"},"body":""}`)
+		body, hdrs, ok := SplitEnvelope(data)
+		if !ok {
+			t.Fatal("expected envelope detection")
+		}
+		if string(body) != "" {
+			t.Errorf("body: got %q, want empty", string(body))
+		}
+		if string(hdrs) != `{"Authorization":"Bearer tok"}` {
+			t.Errorf("headers: got %q", string(hdrs))
+		}
+	})
+
+	t.Run("headers not object rejects", func(t *testing.T) {
+		t.Parallel()
+		data := []byte(`{"headers":"not-an-object","body":"test"}`)
+		_, _, ok := SplitEnvelope(data)
+		if ok {
+			t.Fatal("non-object headers should NOT be detected as envelope")
+		}
+	})
+
+	t.Run("missing body key rejects", func(t *testing.T) {
+		t.Parallel()
+		data := []byte(`{"headers":{"X":"1"}}`)
+		_, _, ok := SplitEnvelope(data)
+		if ok {
+			t.Fatal("missing body key should NOT be detected as envelope")
+		}
+	})
+
+	t.Run("missing headers key rejects", func(t *testing.T) {
+		t.Parallel()
+		data := []byte(`{"body":"test"}`)
+		_, _, ok := SplitEnvelope(data)
+		if ok {
+			t.Fatal("missing headers key should NOT be detected as envelope")
 		}
 	})
 }

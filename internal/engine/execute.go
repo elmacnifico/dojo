@@ -235,6 +235,9 @@ func (e *Engine) prepareEntrypoint(ctx context.Context, id string, test *workspa
 	expIdx := make(map[string]int)
 	for _, l := range phase.expects {
 		apiName := l.Target
+		if idx := strings.IndexByte(apiName, '/'); idx >= 0 {
+			apiName = apiName[:idx]
+		}
 		idx := expIdx[apiName]
 		exp := &Expectation{
 			Target: apiName,
@@ -314,6 +317,9 @@ func (e *Engine) prepareStartupPlan(ctx context.Context, suite *workspace.Suite,
 	expIdx := make(map[string]int)
 	for _, l := range doc.Lines {
 		apiName := l.Target
+		if idx := strings.IndexByte(apiName, '/'); idx >= 0 {
+			apiName = apiName[:idx]
+		}
 		idx := expIdx[apiName]
 		exp := &Expectation{
 			Target: apiName,

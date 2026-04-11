@@ -14,7 +14,7 @@ import (
 // stubMatchTable is a no-op MatchTable for tests that don't need matching.
 type stubMatchTable struct{}
 
-func (stubMatchTable) ProcessRequest(string, string, []byte) dojo.MatchResult {
+func (stubMatchTable) ProcessRequest(string, string, []byte, map[string][]string, string) dojo.MatchResult {
 	return dojo.MatchResult{IsMock: true, MockCode: 200}
 }
 func (stubMatchTable) ProcessResponse(string, string, string, []byte, []byte) {}

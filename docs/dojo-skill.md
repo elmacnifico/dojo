@@ -646,12 +646,41 @@ This means fixture files only need to specify the fields the test cares about.
 A fixture that specifies every field still works identically (it is trivially
 a subset of itself).
 
+### Envelope fixtures (header + body matching)
+
+When the SUT sends outbound HTTP requests where the unique identifier is in a
+header (e.g., `Authorization: Bearer <token>`) rather than in the body, use
+an **envelope fixture**. The existing `Request:` clause gains an auto-detected
+format — no DSL changes needed.
+
+A `Request:` fixture file is treated as an envelope when it is valid JSON with
+exactly two top-level keys: `"headers"` (object) and `"body"`.
+
+```json
+{
+  "headers": { "Authorization": "Bearer mock_token_user_A" },
+  "body": "action=getmeas"
+}
+```
+
+**Body value semantics:**
+- **String** (`"body": "action=getmeas"`) — raw bytes, matched with whitespace-collapsed substring match (same as non-JSON fallback).
+- **Object/array** (`"body": {"to": "491234500700"}`) — matched with JSON subset matching.
+- **Empty string** (`"body": ""`) — wildcard, matches any body.
+
+**Header matching:** Actual HTTP headers are flattened to `{"Header-Name": "first-value", ...}` and matched with JSON subset matching against the `"headers"` value. Both body AND headers must match for a hit.
+
+This is the key tool for concurrent tests against APIs that use bearer tokens
+or API keys in headers with identical form-encoded bodies.
+
 ### Uniqueness constraint
 
 No two tests in a suite may share an identical normalized expected request for
-the same API. Dojo rejects exact duplicates at load time. If two different
-subset fixtures both match the same actual request at runtime, Dojo reports an
-ambiguous match error.
+the same API. Dojo rejects exact duplicates at load time. When envelope
+fixtures are used, the headers are included in the dedup key — two expectations
+with the same body but different headers are considered distinct. If two
+different subset fixtures both match the same actual request at runtime, Dojo
+reports an ambiguous match error.
 
 ## Best Practices: Fixtures and Concurrency
 
@@ -672,8 +701,60 @@ If your fixture is too small (e.g., `{ "generationConfig": { "temperature": 0.7 
 To make fixtures concurrency-safe:
 - **Include unique identifiers:** Always include a field that uniquely ties the outbound request to the specific test trigger. For example, include the specific `user_id`, `session_id`, or a distinct string in the prompt/payload that is unique to that test case.
 - **Avoid overly generic subset matches:** Ensure your subset is specific enough that it cannot plausibly match another test's traffic.
+- **Use envelope fixtures for header-based disambiguation:** When the SUT's outbound calls differ only in headers (e.g., OAuth bearer tokens), use envelope fixtures so each test matches on its unique token:
 
-By combining these two practices—minimizing useless fields while retaining unique identifiers—you create suites that are both resilient to refactoring and safe to run at high concurrency.
+```
+# test_withings_user_A/withings_request.json
+{"headers": {"Authorization": "Bearer token_user_A"}, "body": "action=getmeas"}
+
+# test_withings_user_B/withings_request.json
+{"headers": {"Authorization": "Bearer token_user_B"}, "body": "action=getmeas"}
+```
+
+Both tests share the same body but are disambiguated by header values, enabling safe concurrent execution.
+
+By combining these practices—minimizing useless fields, retaining unique identifiers, and using envelope fixtures for header-based APIs—you create suites that are both resilient to refactoring and safe to run at high concurrency.
+
+## Testing Agent Chains
+
+When testing a system composed of multiple AI agents (e.g., Image Agent -> Intent Agent -> Conversation Agent), you should isolate each agent to prevent cascading failures and pinpoint errors.
+
+### Isolation Strategy
+
+To test an intermediate agent in the chain:
+1. **Make the Target Agent Live**: The agent you are testing must call the real LLM API (`mode: live`).
+2. **Mock Downstream Agents**: Any agent that runs *after* the target agent must be mocked (`mode: mock`). This stops the chain from continuing and saves tokens/time.
+3. **Evaluate the Handoff Payload**: Instead of evaluating the final output of the entire system (which won't exist because downstream agents are mocked), evaluate the *request* sent to the first mocked downstream agent.
+
+### Example: Testing an "Intent" Agent
+
+Suppose your pipeline is `Image -> Intent -> Conversation -> WhatsApp`. To test the `Intent` agent:
+
+1. **`dojo.yaml` configuration**:
+   - `gemini_image`: `mock` (Provide a static image analysis so the Intent agent has deterministic input)
+   - `gemini_intent`: `live` (The agent under test)
+   - `gemini_conv`: `mock` (Stop the chain here)
+   - `whatsapp`: `mock`
+
+2. **`.plan` file**:
+   ```text
+   Perform -> entrypoints/webhook -> Payload: incoming.json
+   Expect -> gemini_conv -> Evaluate Response
+   ```
+   *Note: We expect a call to `gemini_conv` because that is the next step in the SUT's code after the Intent agent finishes. By evaluating this request, we can inspect the exact output produced by the Intent agent.*
+
+3. **`eval.md` (Grading Rubric)**:
+   Instruct the AI Evaluator on how to extract the target agent's output from the downstream request payload:
+   ```markdown
+   You are evaluating the Intent Agent. The ACTUAL PAYLOAD is the HTTP request sent to the Conversation Agent.
+   Inside the ACTUAL PAYLOAD, look at `contents[0].parts[0].text`. This contains a JSON object called "Shared Context".
+   Find the `intent_result` field inside that Shared Context. This is the output of the Intent Agent.
+
+   Evaluate `intent_result` based on these criteria:
+   ...
+   ```
+
+This strategy ensures that each suite tests exactly one agent's logic, making failures unambiguous and evaluation highly precise.
 
 ## Running a Suite
 

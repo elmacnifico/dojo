@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -67,11 +68,27 @@ type matchHit struct {
 	idx  int
 }
 
+// headersMatch flattens actual HTTP headers to {"Header-Name": "first-value", ...}
+// and checks that every key/value in expectedJSON is present using JSONSubsetMatch.
+func headersMatch(actual map[string][]string, expectedJSON []byte) bool {
+	flat := make(map[string]string, len(actual))
+	for k, vv := range actual {
+		if len(vv) > 0 {
+			flat[k] = vv[0]
+		}
+	}
+	actualJSON, err := json.Marshal(flat)
+	if err != nil {
+		return false
+	}
+	return workspace.JSONSubsetMatch(actualJSON, expectedJSON)
+}
+
 // ProcessRequest correlates the intercepted request to an active test by
 // comparing actual and expected request payloads using subset matching. For
 // APIs with ordered expectations, the first unfulfilled expectation whose
-// payload matches is used.
-func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) dojo.MatchResult {
+// payload matches is used. reqHeaders carries HTTP headers (nil for non-HTTP).
+func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte, reqHeaders map[string][]string, reqURL string) dojo.MatchResult {
 	e.processRequestMu.Lock()
 	defer e.processRequestMu.Unlock()
 
@@ -110,29 +127,40 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) doj
 				if i >= len(exps) || exps[i].Fulfilled {
 					continue
 				}
-				if spec.ExpectedRequest == nil || len(spec.ExpectedRequest.Payload) == 0 {
-					hits = append(hits, matchHit{test: at, idx: i})
-					return true
+				bodyMatch := spec.ExpectedRequest == nil || len(spec.ExpectedRequest.Payload) == 0 ||
+					payloadsMatch(eff, reqPayload, spec.ExpectedRequest.Payload, at.Variables)
+				if !bodyMatch {
+					continue
 				}
-				if payloadsMatch(eff, reqPayload, spec.ExpectedRequest.Payload, at.Variables) {
-					hits = append(hits, matchHit{test: at, idx: i})
-					return true
+			if spec.ExpectedHeaders != nil && len(spec.ExpectedHeaders.Payload) > 0 {
+				if reqHeaders == nil || !headersMatch(reqHeaders, spec.ExpectedHeaders.Payload) {
+					continue
 				}
 			}
+			if spec.Path != "" && spec.Path != reqURL {
+				continue
+			}
+			hits = append(hits, matchHit{test: at, idx: i})
 			return true
 		}
+		return true
+	}
 
 		// Fallback: single ExpectedRequest (backward compat).
 		if exps[0].Fulfilled {
 			return true
 		}
-		if eff.ExpectedRequest == nil || len(eff.ExpectedRequest.Payload) == 0 {
-			hits = append(hits, matchHit{test: at, idx: 0})
+		bodyMatch := eff.ExpectedRequest == nil || len(eff.ExpectedRequest.Payload) == 0 ||
+			payloadsMatch(eff, reqPayload, eff.ExpectedRequest.Payload, at.Variables)
+		if !bodyMatch {
 			return true
 		}
-		if payloadsMatch(eff, reqPayload, eff.ExpectedRequest.Payload, at.Variables) {
-			hits = append(hits, matchHit{test: at, idx: 0})
+		if eff.ExpectedHeaders != nil && len(eff.ExpectedHeaders.Payload) > 0 {
+			if reqHeaders == nil || !headersMatch(reqHeaders, eff.ExpectedHeaders.Payload) {
+				return true
+			}
 		}
+		hits = append(hits, matchHit{test: at, idx: 0})
 		return true
 	})
 
@@ -158,8 +186,13 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) doj
 		// test-level API override for this API, use that config for the mock
 		// response. This lets tests override default_response (e.g. serve a
 		// binary file) without needing an Expect clause.
+		// Skip overrides from tests that have expectations for this API — their
+		// override is for matched-response workflows, not general defaults.
 		var override *workspace.APIConfig
 		e.Registry.ForEach(func(_ string, at *ActiveTest) bool {
+			if len(at.Expectations[apiName]) > 0 {
+				return true
+			}
 			if tcfg, ok := at.Test.APIs[apiName]; ok {
 				suiteCfg := suite.APIs[apiName]
 				// Check if this test actually overrides the suite config
@@ -185,17 +218,21 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) doj
 		exp := exps[matchedIdx]
 
 		if exp.RequiresEval && apiConfig.Mode != "live" {
-			if evalErr := e.Evaluate(activeTest, reqPayload); evalErr != nil {
-				result.Err = fmt.Errorf("AI Evaluation failed: %w", evalErr)
+			go func(at *ActiveTest, api string, idx int, payload []byte) {
+				var evalErr error
+				if err := e.Evaluate(at, payload); err != nil {
+					evalErr = fmt.Errorf("AI Evaluation failed: %w", err)
+				}
+				at.MarkFulfilled(api, idx, evalErr)
+			}(activeTest, apiName, matchedIdx, reqPayload)
+		} else {
+			hasExpResp := apiConfig.ExpectedResponse != nil && len(apiConfig.ExpectedResponse.Payload) > 0
+			deferToResponse := (protocol == "http" && apiConfig.Mode == "live" &&
+				(hasExpResp || exp.RequiresEval)) ||
+				(protocol == "postgres" && apiConfig.Mode == "live")
+			if !deferToResponse {
+				activeTest.MarkFulfilled(apiName, matchedIdx, nil)
 			}
-		}
-
-		hasExpResp := apiConfig.ExpectedResponse != nil && len(apiConfig.ExpectedResponse.Payload) > 0
-		deferToResponse := (protocol == "http" && apiConfig.Mode == "live" &&
-			(hasExpResp || exp.RequiresEval)) ||
-			(protocol == "postgres" && apiConfig.Mode == "live")
-		if result.Err != nil || !deferToResponse {
-			activeTest.MarkFulfilled(apiName, matchedIdx, result.Err)
 		}
 
 		// Use the matched expectation's specific response if available.
@@ -217,7 +254,7 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte) doj
 		}
 		result.MockContentType = apiConfig.DefaultResponse.ContentType
 		payload := apiConfig.DefaultResponse.Payload
-		if apiConfig.DefaultResponse.File == "" {
+		if apiConfig.DefaultResponse.File == "" || strings.HasSuffix(apiConfig.DefaultResponse.File, ".json") {
 			payload = []byte(os.ExpandEnv(string(payload)))
 		}
 		result.MockResponse = payload
@@ -317,7 +354,9 @@ func (e *Engine) ProcessResponse(protocol, matchedID, apiName string, reqPayload
 				})
 			}
 		} else if unfulfilled := activeTest.FirstUnfulfilled(apiName); unfulfilled != nil && unfulfilled.RequiresEval {
-			e.evalAndMark(activeTest, apiName, unfulfilled.Index, respPayload)
+			payloadCopy := make([]byte, len(respPayload))
+			copy(payloadCopy, respPayload)
+			go e.evalAndMark(activeTest, apiName, unfulfilled.Index, payloadCopy)
 		}
 	}
 }

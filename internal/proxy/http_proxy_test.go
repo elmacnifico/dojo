@@ -19,7 +19,7 @@ import (
 
 type failingMatchTable struct{}
 
-func (f *failingMatchTable) ProcessRequest(protocol, apiName string, reqPayload []byte) dojo.MatchResult {
+func (f *failingMatchTable) ProcessRequest(protocol, apiName string, reqPayload []byte, reqHeaders map[string][]string, reqURL string) dojo.MatchResult {
 	return dojo.MatchResult{Err: fmt.Errorf("injected match failure")}
 }
 
@@ -118,14 +118,14 @@ func TestHTTPProxy(t *testing.T) {
 
 type emptyDestMatchTable struct{}
 
-func (emptyDestMatchTable) ProcessRequest(string, string, []byte) dojo.MatchResult {
+func (emptyDestMatchTable) ProcessRequest(string, string, []byte, map[string][]string, string) dojo.MatchResult {
 	return dojo.MatchResult{}
 }
 func (emptyDestMatchTable) ProcessResponse(string, string, string, []byte, []byte) {}
 
 type zeroCodeMockTable struct{}
 
-func (zeroCodeMockTable) ProcessRequest(string, string, []byte) dojo.MatchResult {
+func (zeroCodeMockTable) ProcessRequest(string, string, []byte, map[string][]string, string) dojo.MatchResult {
 	return dojo.MatchResult{MatchedID: "id", IsMock: true, MockCode: 0, MockResponse: []byte(`{"ok":1}`)}
 }
 func (zeroCodeMockTable) ProcessResponse(string, string, string, []byte, []byte) {}
@@ -206,7 +206,7 @@ type slowLiveMatchTable struct {
 	destURL string
 }
 
-func (s slowLiveMatchTable) ProcessRequest(string, string, []byte) dojo.MatchResult {
+func (s slowLiveMatchTable) ProcessRequest(string, string, []byte, map[string][]string, string) dojo.MatchResult {
 	return dojo.MatchResult{DestURL: s.destURL}
 }
 func (slowLiveMatchTable) ProcessResponse(string, string, string, []byte, []byte) {}

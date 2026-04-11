@@ -81,7 +81,12 @@ func (p *HTTPProxy) Start(ctx context.Context, listenAddr string, matchTable doj
 		}
 		apiName := pathParts[0]
 
-		m := p.matchTable.ProcessRequest("http", apiName, bodyBytes)
+		reqURL := ""
+		if len(pathParts) > 1 {
+			reqURL = "/" + strings.Join(pathParts[1:], "/")
+		}
+
+		m := p.matchTable.ProcessRequest("http", apiName, bodyBytes, r.Header, reqURL)
 		if m.Err != nil {
 			http.Error(w, m.Err.Error(), http.StatusBadGateway)
 			return
@@ -109,6 +114,9 @@ func (p *HTTPProxy) Start(ctx context.Context, listenAddr string, matchTable doj
 		}
 
 		realPath := "/" + strings.Join(pathParts[1:], "/")
+		if r.URL.RawQuery != "" {
+			realPath += "?" + r.URL.RawQuery
+		}
 		target := strings.TrimRight(m.DestURL, "/") + realPath
 
 		proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)

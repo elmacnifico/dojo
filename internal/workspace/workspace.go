@@ -31,6 +31,8 @@ type DefaultResponse struct {
 // Used by OrderedExpectations for multi-expectation plans.
 type ExpectationSpec struct {
 	ExpectedRequest *PayloadSpec
+	ExpectedHeaders *PayloadSpec // JSON subset matched against flattened HTTP headers
+	Path            string       // URL path after API name for HTTP matching (e.g. "/media_foo")
 	Response        *DefaultResponse
 	RequiresEval    bool
 }
@@ -43,6 +45,7 @@ type APIConfig struct {
 	URL              string            `json:"url" yaml:"url"`
 	Headers          map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"` // For API keys via env vars
 	ExpectedRequest  *PayloadSpec      `json:"expected_request,omitempty" yaml:"expected_request,omitempty"`
+	ExpectedHeaders  *PayloadSpec      `json:"-" yaml:"-"` // populated from envelope fixtures
 	ExpectedResponse *PayloadSpec      `json:"expected_response,omitempty" yaml:"expected_response,omitempty"`
 	DefaultResponse  *DefaultResponse  `json:"default_response,omitempty" yaml:"default_response,omitempty"`
 
@@ -483,6 +486,11 @@ func CopyAPIConfig(src APIConfig) APIConfig {
 		e.Payload = cloneBytes(src.ExpectedRequest.Payload)
 		dst.ExpectedRequest = &e
 	}
+	if src.ExpectedHeaders != nil {
+		e := *src.ExpectedHeaders
+		e.Payload = cloneBytes(src.ExpectedHeaders.Payload)
+		dst.ExpectedHeaders = &e
+	}
 	if src.ExpectedResponse != nil {
 		e := *src.ExpectedResponse
 		e.Payload = cloneBytes(src.ExpectedResponse.Payload)
@@ -500,6 +508,11 @@ func CopyAPIConfig(src APIConfig) APIConfig {
 				e := *s.ExpectedRequest
 				e.Payload = cloneBytes(s.ExpectedRequest.Payload)
 				dst.OrderedExpectations[i].ExpectedRequest = &e
+			}
+			if s.ExpectedHeaders != nil {
+				e := *s.ExpectedHeaders
+				e.Payload = cloneBytes(s.ExpectedHeaders.Payload)
+				dst.OrderedExpectations[i].ExpectedHeaders = &e
 			}
 			if s.Response != nil {
 				r := *s.Response
@@ -554,6 +567,11 @@ func WireFixturesFromPlan(doc *ParsedDocument, test *Test, suite *Suite, testPat
 			continue
 		}
 		apiName := line.Target
+		var expectPath string
+		if idx := strings.IndexByte(apiName, '/'); idx >= 0 {
+			expectPath = apiName[idx:]
+			apiName = apiName[:idx]
+		}
 
 		if _, ok := test.APIs[apiName]; !ok {
 			if suiteCfg, ok := suite.APIs[apiName]; ok {
@@ -565,6 +583,7 @@ func WireFixturesFromPlan(doc *ParsedDocument, test *Test, suite *Suite, testPat
 		cfg := test.APIs[apiName]
 
 		var spec ExpectationSpec
+		spec.Path = expectPath
 		hasRequest := false
 		for _, clause := range line.Clauses {
 			if clause.Value == nil {
@@ -607,8 +626,7 @@ func WireFixturesFromPlan(doc *ParsedDocument, test *Test, suite *Suite, testPat
 				cfg.ExpectedRequest = nil
 			}
 			cfg.OrderedExpectations = append(cfg.OrderedExpectations, spec)
-		} else if spec.Response != nil {
-			// Expect with no Request: clause but a Respond: clause -- just update the response.
+		} else if spec.Response != nil && spec.Path == "" {
 			cfg.DefaultResponse = spec.Response
 		} else {
 			// Expect with no Request and no implicit fixture found.
@@ -634,6 +652,14 @@ func WireFixturesFromPlan(doc *ParsedDocument, test *Test, suite *Suite, testPat
 				}
 				s.ExpectedRequest.Payload = b
 			}
+			// Auto-detect envelope fixture and split into body + headers.
+			if s.ExpectedRequest != nil && len(s.ExpectedRequest.Payload) > 0 {
+				body, hdrs, ok := SplitEnvelope(s.ExpectedRequest.Payload)
+				if ok {
+					s.ExpectedRequest.Payload = body
+					s.ExpectedHeaders = &PayloadSpec{Payload: hdrs}
+				}
+			}
 			if s.Response != nil && s.Response.File != "" {
 				b, err := ResolveFile(s.Response.File, testPath, suitePath)
 				if err != nil {
@@ -646,6 +672,7 @@ func WireFixturesFromPlan(doc *ParsedDocument, test *Test, suite *Suite, testPat
 		// For single-expectation backward compat, also set ExpectedRequest/DefaultResponse.
 		if len(cfg.OrderedExpectations) == 1 {
 			cfg.ExpectedRequest = cfg.OrderedExpectations[0].ExpectedRequest
+			cfg.ExpectedHeaders = cfg.OrderedExpectations[0].ExpectedHeaders
 			if cfg.OrderedExpectations[0].Response != nil {
 				cfg.DefaultResponse = cfg.OrderedExpectations[0].Response
 			}
@@ -853,6 +880,14 @@ func resolvePayload(cfg *APIConfig, primaryDir string, fallbackDir string) error
 			cfg.ExpectedRequest.Payload = b
 		} else if cfg.ExpectedRequest.Body != "" {
 			cfg.ExpectedRequest.Payload = []byte(cfg.ExpectedRequest.Body)
+		}
+		// Auto-detect envelope fixture for the single-expectation path.
+		if len(cfg.ExpectedRequest.Payload) > 0 {
+			body, hdrs, ok := SplitEnvelope(cfg.ExpectedRequest.Payload)
+			if ok {
+				cfg.ExpectedRequest.Payload = body
+				cfg.ExpectedHeaders = &PayloadSpec{Payload: hdrs}
+			}
 		}
 	}
 

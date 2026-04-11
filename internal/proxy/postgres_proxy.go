@@ -294,7 +294,7 @@ func (p *PostgresProxy) acceptLoop() {
 				p.recordQuery(clientConn, m.String)
 				var mr dojo.MatchResult
 				if p.matchTable != nil {
-					mr = p.matchTable.ProcessRequest("postgres", "", []byte(m.String))
+					mr = p.matchTable.ProcessRequest("postgres", "", []byte(m.String), nil, "")
 				}
 
 				p.mu.Lock()
@@ -314,7 +314,7 @@ func (p *PostgresProxy) acceptLoop() {
 				p.recordQuery(clientConn, m.Query)
 				var mr dojo.MatchResult
 				if p.matchTable != nil {
-					mr = p.matchTable.ProcessRequest("postgres", "", []byte(m.Query))
+					mr = p.matchTable.ProcessRequest("postgres", "", []byte(m.Query), nil, "")
 				}
 
 				p.mu.Lock()
@@ -343,7 +343,7 @@ func (p *PostgresProxy) acceptLoop() {
 							p.recordQuery(clientConn, resolvedSQL)
 							var mr dojo.MatchResult
 							if p.matchTable != nil {
-								mr = p.matchTable.ProcessRequest("postgres", "", []byte(resolvedSQL))
+								mr = p.matchTable.ProcessRequest("postgres", "", []byte(resolvedSQL), nil, "")
 							}
 							p.mu.Lock()
 							if pc, ok := p.conns[clientConn]; ok {

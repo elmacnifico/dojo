@@ -159,7 +159,11 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) (StartupPha
 	for apiName, apiConfig := range suite.APIs {
 		var val string
 		if apiConfig.Protocol == "postgres" || strings.HasPrefix(apiConfig.URL, "postgres://") {
-			val = fmt.Sprintf("postgres://postgres:postgres@%s/postgres?sslmode=disable", e.PostgresProxy.Addr())
+			query := "sslmode=disable"
+			if u, err := url.Parse(apiConfig.URL); err == nil && u.RawQuery != "" {
+				query = u.RawQuery
+			}
+			val = fmt.Sprintf("postgres://postgres:postgres@%s/postgres?%s", e.PostgresProxy.Addr(), query)
 		} else {
 			val = fmt.Sprintf("http://%s/%s", e.HTTPProxy.Addr(), apiName)
 		}

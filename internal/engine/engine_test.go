@@ -326,7 +326,7 @@ func TestWithLogger(t *testing.T) {
 func TestProcessRequest_NoActiveSuite(t *testing.T) {
 	t.Parallel()
 	eng := engine.NewEngine(&workspace.Workspace{})
-	m := eng.ProcessRequest("http", "any", []byte("{}"))
+	m := eng.ProcessRequest("http", "any", []byte("{}"), nil, "")
 	if m.Err == nil || !strings.Contains(m.Err.Error(), "no active suite") {
 		t.Fatalf("expected 'no active suite' error, got: %v", m.Err)
 	}
@@ -336,7 +336,7 @@ func TestProcessRequest_APINotFound(t *testing.T) {
 	t.Parallel()
 	eng := engine.NewEngine(&workspace.Workspace{})
 	eng.ActiveSuite = &workspace.Suite{APIs: map[string]workspace.APIConfig{}}
-	m := eng.ProcessRequest("http", "nonexistent", []byte("{}"))
+	m := eng.ProcessRequest("http", "nonexistent", []byte("{}"), nil, "")
 	if m.Err == nil || !strings.Contains(m.Err.Error(), "not found in suite") {
 		t.Fatalf("expected 'not found in suite' error, got: %v", m.Err)
 	}
@@ -364,7 +364,7 @@ func TestProcessRequest_PostgresMatchesNormalizedSQL(t *testing.T) {
 	eng.ActiveSuite = suite
 	eng.Registry.Register("test_folder", active)
 
-	m := eng.ProcessRequest("postgres", "", []byte("  INSERT   INTO   t   VALUES (1)  "))
+	m := eng.ProcessRequest("postgres", "", []byte("  INSERT   INTO   t   VALUES (1)  "), nil, "")
 	if m.Err != nil {
 		t.Fatalf("unexpected error: %v", m.Err)
 	}
@@ -402,7 +402,7 @@ func TestProcessRequest_SubsetMatchSucceeds(t *testing.T) {
 	eng.Registry.Register("test_subset", active)
 
 	actual := []byte(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}],"generationConfig":{"temperature":0.7},"systemInstruction":{"parts":[{"text":"You are helpful."}]}}`)
-	m := eng.ProcessRequest("http", "gemini", actual)
+	m := eng.ProcessRequest("http", "gemini", actual, nil, "")
 	if m.Err != nil {
 		t.Fatalf("unexpected error: %v", m.Err)
 	}
@@ -434,7 +434,7 @@ func TestProcessRequest_SubsetMismatchFails(t *testing.T) {
 	eng.Registry.Register("test_nomatch", active)
 
 	actual := []byte(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`)
-	m := eng.ProcessRequest("http", "gemini", actual)
+	m := eng.ProcessRequest("http", "gemini", actual, nil, "")
 	if m.MatchedID != "" {
 		t.Errorf("expected no match, got MatchedID=%q", m.MatchedID)
 	}
@@ -462,7 +462,7 @@ func TestProcessRequest_PostgresContainsMatch(t *testing.T) {
 	eng.ActiveSuite = suite
 	eng.Registry.Register("test_pg_contains", active)
 
-	m := eng.ProcessRequest("postgres", "", []byte("INSERT INTO users (id, name) VALUES ('1', 'alice')"))
+	m := eng.ProcessRequest("postgres", "", []byte("INSERT INTO users (id, name) VALUES ('1', 'alice')"), nil, "")
 	if m.Err != nil {
 		t.Fatalf("unexpected error: %v", m.Err)
 	}
@@ -502,7 +502,7 @@ func TestProcessRequest_OrderedMultiExpectations(t *testing.T) {
 	eng.Registry.Register("test_multi", active)
 
 	// First call matches intent expectation.
-	m1 := eng.ProcessRequest("http", "gemini", []byte(`{"role":"intent","extra":"ignored"}`))
+	m1 := eng.ProcessRequest("http", "gemini", []byte(`{"role":"intent","extra":"ignored"}`), nil, "")
 	if m1.Err != nil {
 		t.Fatalf("first call: unexpected error: %v", m1.Err)
 	}
@@ -517,7 +517,7 @@ func TestProcessRequest_OrderedMultiExpectations(t *testing.T) {
 	}
 
 	// Second call matches conversation expectation.
-	m2 := eng.ProcessRequest("http", "gemini", []byte(`{"role":"conversation","context":"stuff"}`))
+	m2 := eng.ProcessRequest("http", "gemini", []byte(`{"role":"conversation","context":"stuff"}`), nil, "")
 	if m2.Err != nil {
 		t.Fatalf("second call: unexpected error: %v", m2.Err)
 	}
@@ -568,11 +568,11 @@ func TestProcessRequest_ConcurrentSamePayloadOrderedExpects(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			_ = eng.ProcessRequest("http", "gemini", body)
+			_ = eng.ProcessRequest("http", "gemini", body, nil, "")
 		}()
 		go func() {
 			defer wg.Done()
-			_ = eng.ProcessRequest("http", "gemini", body)
+			_ = eng.ProcessRequest("http", "gemini", body, nil, "")
 		}()
 		wg.Wait()
 
@@ -599,7 +599,7 @@ func TestProcessRequest_MockCodeDefaultsTo200(t *testing.T) {
 	}
 	eng := engine.NewEngine(&workspace.Workspace{})
 	eng.ActiveSuite = suite
-	m := eng.ProcessRequest("http", "stripe", []byte("{}"))
+	m := eng.ProcessRequest("http", "stripe", []byte("{}"), nil, "")
 	if m.Err != nil {
 		t.Fatalf("unexpected: %v", m.Err)
 	}
@@ -797,7 +797,7 @@ func TestProcessRequest_PostgresLiveDefersFullfillment(t *testing.T) {
 	eng.ActiveSuite = suite
 	eng.Registry.Register("t1", active)
 
-	m := eng.ProcessRequest("postgres", "", []byte("INSERT INTO t VALUES (1)"))
+	m := eng.ProcessRequest("postgres", "", []byte("INSERT INTO t VALUES (1)"), nil, "")
 	if m.Err != nil {
 		t.Fatalf("unexpected error: %v", m.Err)
 	}
@@ -1086,7 +1086,7 @@ func TestProcessRequest_LiveHTTPEvalDefersToResponse(t *testing.T) {
 	eng.ActiveSuite = suite
 	eng.Registry.Register("t1", active)
 
-	m := eng.ProcessRequest("http", "gemini", []byte(`{"prompt":"hello"}`))
+	m := eng.ProcessRequest("http", "gemini", []byte(`{"prompt":"hello"}`), nil, "")
 	if m.Err != nil {
 		t.Fatalf("unexpected error: %v", m.Err)
 	}
@@ -1122,6 +1122,10 @@ func TestProcessResponse_HTTPLiveEvalFailsWithoutConfig(t *testing.T) {
 	eng.Registry.Register("t1", active)
 
 	eng.ProcessResponse("http", "t1", "gemini", nil, []byte(`{"candidates":[{"content":"response"}]}`))
+	
+	// Wait for async evalAndMark to complete
+	time.Sleep(100 * time.Millisecond)
+
 	if !active.Expectations["gemini"][0].Fulfilled {
 		t.Error("expected gemini expectation to be marked fulfilled (done)")
 	}
@@ -1986,5 +1990,228 @@ apis:
 	}
 	if !strings.Contains(reason, "timed out") {
 		t.Fatalf("expected timeout error, got: %s", reason)
+	}
+}
+
+func TestProcessRequest_HeaderMatch(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"withings": {Mode: "mock",
+				ExpectedRequest: &workspace.PayloadSpec{Payload: []byte("action=getmeas")},
+				ExpectedHeaders: &workspace.PayloadSpec{Payload: []byte(`{"Authorization":"Bearer token_abc"}`)},
+				DefaultResponse: &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"ok":true}`)},
+				OrderedExpectations: []workspace.ExpectationSpec{{
+					ExpectedRequest: &workspace.PayloadSpec{Payload: []byte("action=getmeas")},
+					ExpectedHeaders: &workspace.PayloadSpec{Payload: []byte(`{"Authorization":"Bearer token_abc"}`)},
+					Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"ok":true}`)},
+				}},
+			},
+		},
+	}
+	active := &engine.ActiveTest{
+		ID:    "test_hdr",
+		Suite: suite,
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Expectations: map[string][]*engine.Expectation{
+			"withings": {{Target: "withings"}},
+		},
+	}
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("test_hdr", active)
+
+	headers := map[string][]string{
+		"Authorization": {"Bearer token_abc"},
+		"Content-Type":  {"application/x-www-form-urlencoded"},
+	}
+	m := eng.ProcessRequest("http", "withings", []byte("action=getmeas&userid=123"), headers, "")
+	if m.Err != nil {
+		t.Fatalf("unexpected error: %v", m.Err)
+	}
+	if m.MatchedID != "test_hdr" {
+		t.Errorf("MatchedID: got %q, want %q", m.MatchedID, "test_hdr")
+	}
+}
+
+func TestProcessRequest_HeaderMismatch(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"withings": {Mode: "mock",
+				ExpectedRequest: &workspace.PayloadSpec{Payload: []byte("action=getmeas")},
+				ExpectedHeaders: &workspace.PayloadSpec{Payload: []byte(`{"Authorization":"Bearer token_abc"}`)},
+				DefaultResponse: &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"ok":true}`)},
+				OrderedExpectations: []workspace.ExpectationSpec{{
+					ExpectedRequest: &workspace.PayloadSpec{Payload: []byte("action=getmeas")},
+					ExpectedHeaders: &workspace.PayloadSpec{Payload: []byte(`{"Authorization":"Bearer token_abc"}`)},
+					Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"ok":true}`)},
+				}},
+			},
+		},
+	}
+	active := &engine.ActiveTest{
+		ID:    "test_hdr_miss",
+		Suite: suite,
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Expectations: map[string][]*engine.Expectation{
+			"withings": {{Target: "withings"}},
+		},
+	}
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("test_hdr_miss", active)
+
+	headers := map[string][]string{
+		"Authorization": {"Bearer wrong_token"},
+	}
+	m := eng.ProcessRequest("http", "withings", []byte("action=getmeas&userid=123"), headers, "")
+	if m.MatchedID != "" {
+		t.Errorf("expected no match with wrong header, got MatchedID=%q", m.MatchedID)
+	}
+}
+
+func TestProcessRequest_HeaderDisambiguates(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"withings": {Mode: "mock",
+				DefaultResponse: &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"default":true}`)},
+			},
+		},
+	}
+
+	testA := &workspace.Test{
+		APIs: map[string]workspace.APIConfig{
+			"withings": {Mode: "mock",
+				ExpectedRequest: &workspace.PayloadSpec{Payload: []byte("action=getmeas")},
+				ExpectedHeaders: &workspace.PayloadSpec{Payload: []byte(`{"Authorization":"Bearer user_A"}`)},
+				DefaultResponse: &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"user":"A"}`)},
+				OrderedExpectations: []workspace.ExpectationSpec{{
+					ExpectedRequest: &workspace.PayloadSpec{Payload: []byte("action=getmeas")},
+					ExpectedHeaders: &workspace.PayloadSpec{Payload: []byte(`{"Authorization":"Bearer user_A"}`)},
+					Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"user":"A"}`)},
+				}},
+			},
+		},
+	}
+	testB := &workspace.Test{
+		APIs: map[string]workspace.APIConfig{
+			"withings": {Mode: "mock",
+				ExpectedRequest: &workspace.PayloadSpec{Payload: []byte("action=getmeas")},
+				ExpectedHeaders: &workspace.PayloadSpec{Payload: []byte(`{"Authorization":"Bearer user_B"}`)},
+				DefaultResponse: &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"user":"B"}`)},
+				OrderedExpectations: []workspace.ExpectationSpec{{
+					ExpectedRequest: &workspace.PayloadSpec{Payload: []byte("action=getmeas")},
+					ExpectedHeaders: &workspace.PayloadSpec{Payload: []byte(`{"Authorization":"Bearer user_B"}`)},
+					Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"user":"B"}`)},
+				}},
+			},
+		},
+	}
+
+	activeA := &engine.ActiveTest{
+		ID: "test_a", Suite: suite, Test: testA,
+		Expectations: map[string][]*engine.Expectation{
+			"withings": {{Target: "withings"}},
+		},
+	}
+	activeB := &engine.ActiveTest{
+		ID: "test_b", Suite: suite, Test: testB,
+		Expectations: map[string][]*engine.Expectation{
+			"withings": {{Target: "withings"}},
+		},
+	}
+
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("test_a", activeA)
+	eng.Registry.Register("test_b", activeB)
+
+	headersA := map[string][]string{"Authorization": {"Bearer user_A"}}
+	headersB := map[string][]string{"Authorization": {"Bearer user_B"}}
+
+	mA := eng.ProcessRequest("http", "withings", []byte("action=getmeas&userid=1"), headersA, "")
+	if mA.MatchedID != "test_a" {
+		t.Errorf("expected test_a match, got %q", mA.MatchedID)
+	}
+
+	mB := eng.ProcessRequest("http", "withings", []byte("action=getmeas&userid=2"), headersB, "")
+	if mB.MatchedID != "test_b" {
+		t.Errorf("expected test_b match, got %q", mB.MatchedID)
+	}
+}
+
+func TestProcessRequest_WildcardBodyHeaderDisambiguates(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"whoop": {Mode: "mock",
+				DefaultResponse: &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"default":true}`)},
+			},
+		},
+	}
+
+	mkTest := func(token string, resp []byte) *workspace.Test {
+		return &workspace.Test{
+			APIs: map[string]workspace.APIConfig{
+				"whoop": {Mode: "mock",
+					ExpectedHeaders: &workspace.PayloadSpec{Payload: []byte(fmt.Sprintf(`{"Authorization":"Bearer %s"}`, token))},
+					DefaultResponse: &workspace.DefaultResponse{Code: 200, Payload: resp},
+					OrderedExpectations: []workspace.ExpectationSpec{{
+						ExpectedRequest: &workspace.PayloadSpec{Payload: nil},
+						ExpectedHeaders: &workspace.PayloadSpec{Payload: []byte(fmt.Sprintf(`{"Authorization":"Bearer %s"}`, token))},
+						Response:        &workspace.DefaultResponse{Code: 200, Payload: resp},
+					}},
+				},
+			},
+		}
+	}
+
+	activeA := &engine.ActiveTest{
+		ID: "test_a", Suite: suite, Test: mkTest("tok_A", []byte(`{"user":"A"}`)),
+		Expectations: map[string][]*engine.Expectation{
+			"whoop": {{Target: "whoop"}},
+		},
+	}
+	activeB := &engine.ActiveTest{
+		ID: "test_b", Suite: suite, Test: mkTest("tok_B", []byte(`{"user":"B"}`)),
+		Expectations: map[string][]*engine.Expectation{
+			"whoop": {{Target: "whoop"}},
+		},
+	}
+	activeC := &engine.ActiveTest{
+		ID: "test_c", Suite: suite, Test: mkTest("tok_C", []byte(`{"user":"C"}`)),
+		Expectations: map[string][]*engine.Expectation{
+			"whoop": {{Target: "whoop"}},
+		},
+	}
+
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("test_a", activeA)
+	eng.Registry.Register("test_b", activeB)
+	eng.Registry.Register("test_c", activeC)
+
+	for _, tc := range []struct {
+		token    string
+		wantID   string
+		wantResp string
+	}{
+		{"tok_B", "test_b", `{"user":"B"}`},
+		{"tok_A", "test_a", `{"user":"A"}`},
+		{"tok_C", "test_c", `{"user":"C"}`},
+	} {
+		hdrs := map[string][]string{"Authorization": {"Bearer " + tc.token}}
+		m := eng.ProcessRequest("http", "whoop", nil, hdrs, "")
+		if m.Err != nil {
+			t.Fatalf("token=%s: unexpected error: %v", tc.token, m.Err)
+		}
+		if m.MatchedID != tc.wantID {
+			t.Errorf("token=%s: MatchedID=%q, want %q", tc.token, m.MatchedID, tc.wantID)
+		}
+		if string(m.MockResponse) != tc.wantResp {
+			t.Errorf("token=%s: MockResponse=%q, want %q", tc.token, string(m.MockResponse), tc.wantResp)
+		}
 	}
 }

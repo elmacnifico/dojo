@@ -50,3 +50,10 @@ func (r *Registry) ForEach(fn func(string, *ActiveTest) bool) {
 		}
 	}
 }
+
+// Count returns the number of currently registered active tests.
+func (r *Registry) Count() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.tests)
+}

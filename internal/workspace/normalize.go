@@ -117,6 +117,40 @@ func jsonValueContains(actual, expected any) bool {
 		}
 		return true
 	default:
+		if evStr, ok := expected.(string); ok {
+			if avStr, ok := actual.(string); ok {
+				if strings.HasPrefix(evStr, "*") && strings.HasSuffix(evStr, "*") && len(evStr) >= 2 {
+					return strings.Contains(avStr, evStr[1:len(evStr)-1])
+				}
+				return avStr == evStr
+			}
+		}
 		return actual == expected
 	}
+}
+
+// SplitEnvelope detects whether data is an envelope fixture containing both
+// "headers" (object) and "body" keys. If so it returns the extracted body bytes
+// and raw headers JSON separately. Non-envelope data is returned unchanged.
+func SplitEnvelope(data []byte) (body []byte, headers []byte, isEnvelope bool) {
+	var envelope struct {
+		Headers json.RawMessage `json:"headers"`
+		Body    json.RawMessage `json:"body"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return data, nil, false
+	}
+	if envelope.Headers == nil || envelope.Body == nil {
+		return data, nil, false
+	}
+	var hm map[string]any
+	if json.Unmarshal(envelope.Headers, &hm) != nil {
+		return data, nil, false
+	}
+	// body: string → raw bytes; object/array → keep as JSON
+	var bodyStr string
+	if json.Unmarshal(envelope.Body, &bodyStr) == nil {
+		return []byte(bodyStr), envelope.Headers, true
+	}
+	return envelope.Body, envelope.Headers, true
 }

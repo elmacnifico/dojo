@@ -20,7 +20,10 @@ type MatchResult struct {
 type MatchTable interface {
 	// ProcessRequest matches the intercepted request to an active test using normalized
 	// full equality on expected vs actual payloads, then returns mock response details if the API is mocked.
-	ProcessRequest(protocol, apiName string, reqPayload []byte) MatchResult
+	// reqHeaders carries the HTTP headers from the intercepted request (nil for non-HTTP protocols).
+	// reqURL is the URL path after the API name (e.g. "/media_foo" for /whatsapp_download/media_foo).
+	// Empty for non-HTTP protocols.
+	ProcessRequest(protocol, apiName string, reqPayload []byte, reqHeaders map[string][]string, reqURL string) MatchResult
 
 	// ProcessResponse validates the intercepted live response payload for a specific API against the test plan.
 	// apiName is the logical API key (e.g. HTTP path prefix). For Postgres it may be empty when the engine

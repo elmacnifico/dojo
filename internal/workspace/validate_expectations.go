@@ -13,8 +13,10 @@ import (
 // (ordered multi-expectations).
 func ValidateUniqueExpectedRequests(suite *Suite) error {
 	type expectKey struct {
-		api  string
-		norm string
+		api         string
+		path        string
+		norm        string
+		normHeaders string
 	}
 	seen := make(map[expectKey][]string)
 
@@ -22,23 +24,39 @@ func ValidateUniqueExpectedRequests(suite *Suite) error {
 		for apiName, cfg := range test.APIs {
 			proto := APIProtocolForMatch(cfg)
 
-			// Collect all request payloads for this API (ordered + single).
-			var payloads [][]byte
+			// Collect all (request payload, header payload) pairs for this API.
+			type payloadPair struct {
+				body    []byte
+				headers []byte
+				path    string
+			}
+			var pairs []payloadPair
 			for _, spec := range cfg.OrderedExpectations {
 				if spec.ExpectedRequest != nil && len(spec.ExpectedRequest.Payload) > 0 {
-					payloads = append(payloads, spec.ExpectedRequest.Payload)
+					var hdrs []byte
+					if spec.ExpectedHeaders != nil {
+						hdrs = spec.ExpectedHeaders.Payload
+					}
+					pairs = append(pairs, payloadPair{body: spec.ExpectedRequest.Payload, headers: hdrs, path: spec.Path})
+				} else if spec.Path != "" {
+					pairs = append(pairs, payloadPair{path: spec.Path})
 				}
 			}
-			if len(payloads) == 0 && cfg.ExpectedRequest != nil && len(cfg.ExpectedRequest.Payload) > 0 {
-				payloads = append(payloads, cfg.ExpectedRequest.Payload)
+			if len(pairs) == 0 && cfg.ExpectedRequest != nil && len(cfg.ExpectedRequest.Payload) > 0 {
+				var hdrs []byte
+				if cfg.ExpectedHeaders != nil {
+					hdrs = cfg.ExpectedHeaders.Payload
+				}
+				pairs = append(pairs, payloadPair{body: cfg.ExpectedRequest.Payload, headers: hdrs})
 			}
 
-			for _, p := range payloads {
-				norm := NormalizePayloadForMatch(proto, p)
-				if norm == "" {
+			for _, p := range pairs {
+				norm := NormalizePayloadForMatch(proto, p.body)
+				if norm == "" && p.path == "" {
 					continue
 				}
-				k := expectKey{api: apiName, norm: norm}
+				nh := NormalizeHTTPBody(p.headers)
+				k := expectKey{api: apiName, path: p.path, norm: norm, normHeaders: nh}
 				seen[k] = append(seen[k], testName)
 			}
 		}

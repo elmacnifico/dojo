@@ -102,7 +102,7 @@ func TestProcessRequest_TestLevelOverrideWithoutExpect(t *testing.T) {
 	}
 	eng.Registry.Register("t1", at)
 
-	result := eng.ProcessRequest("http", "download", []byte(`anything`))
+	result := eng.ProcessRequest("http", "download", []byte(`anything`), nil, "")
 	if result.Err != nil {
 		t.Fatalf("unexpected error: %v", result.Err)
 	}

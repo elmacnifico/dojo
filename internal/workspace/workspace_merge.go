@@ -25,6 +25,9 @@ func mergeAPIConfig(base, overlay APIConfig) APIConfig {
 	if overlay.ExpectedRequest != nil {
 		res.ExpectedRequest = overlay.ExpectedRequest
 	}
+	if overlay.ExpectedHeaders != nil {
+		res.ExpectedHeaders = overlay.ExpectedHeaders
+	}
 	if overlay.ExpectedResponse != nil {
 		res.ExpectedResponse = overlay.ExpectedResponse
 	}
