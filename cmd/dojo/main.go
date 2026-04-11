@@ -85,6 +85,17 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	exitCode := 0
+	var eng *engine.Engine
+	defer func() {
+		if eng != nil {
+			if err := eng.StopProxies(); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: proxy shutdown: %v\n", err)
+			}
+		}
+		os.Exit(exitCode)
+	}()
+
 	if format == "console" {
 		fmt.Printf("Starting Dojo Engine...\n")
 		fmt.Printf("Workspace Root: %s\n", workspaceDir)
@@ -96,13 +107,15 @@ func main() {
 	ws, err := workspace.LoadWorkspace(workspaceDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load workspace: %v\n", err)
-		os.Exit(1)
+		exitCode = 1
+		return
 	}
 
 	suite, ok := ws.Suites[suiteName]
 	if !ok {
 		fmt.Fprintf(os.Stderr, "Error: Suite '%s' not found in workspace '%s'\n", suiteName, workspaceDir)
-		os.Exit(1)
+		exitCode = 1
+		return
 	}
 
 	if format == "console" {
@@ -116,18 +129,14 @@ func main() {
 		logLevel = slog.LevelDebug
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
-	eng := engine.NewEngine(ws, engine.WithLogger(logger), engine.WithVerbose(verbose))
+	eng = engine.NewEngine(ws, engine.WithLogger(logger), engine.WithVerbose(verbose))
 
 	startupReport, err := eng.StartProxies(ctx, suiteName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start proxies: %v\n", err)
-		os.Exit(1)
+		exitCode = 1
+		return
 	}
-	defer func() {
-		if err := eng.StopProxies(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: proxy shutdown: %v\n", err)
-		}
-	}()
 
 	if format == "console" {
 		fmt.Printf("\n--- RUNNING SUITE: %s (%d tests, concurrency %d) ---\n\n",
@@ -163,7 +172,8 @@ func main() {
 	summary, err := eng.RunSuite(ctx, suiteName, onResult)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\nFatal Error during Suite Execution: %v\n", err)
-		os.Exit(1)
+		exitCode = 1
+		return
 	}
 
 	sort.Slice(summary.Failures, func(i, j int) bool {
@@ -195,7 +205,7 @@ func main() {
 	}
 
 	if summary.Failed > 0 {
-		os.Exit(1)
+		exitCode = 1
 	}
 }
 
@@ -282,4 +292,3 @@ func resolveSuiteDirectory(suitePath string) (string, error) {
 	}
 	return filepath.Abs(fromMod)
 }
-

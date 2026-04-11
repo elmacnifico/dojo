@@ -72,6 +72,8 @@ The example blackbox suite includes **`startup.plan`**, which expects the exampl
 
 All tests (including the example suite) must pass before considering a task complete. Unit tests alone are not sufficient — the example suite is the integration smoke test for the entire system.
 
+The CLI is refactored so **`StopProxies` always runs** on non-zero exit (Go `os.Exit` skips `defer`, which previously leaked the SUT on `:8080`). Optional end-to-end check: `go test -tags=integration -race ./cmd/dojo/...` (runs the example suite via a built binary; default `go test ./...` skips it because other packages may use `:8080` in parallel).
+
 **README and suite-authoring guide:** Contributor overview in [readme.md](readme.md). The shipped reference for writing suites (and for using as a Cursor Agent Skill) is **[docs/dojo-skill.md](docs/dojo-skill.md)**. To activate it in Cursor, copy or symlink that file to `.cursor/skills/dojo/SKILL.md` in this repo or in a consumer repo. Do not add a second standalone `SKILL.md` at the repository root.
 
 ## 9. Communication
