@@ -34,6 +34,8 @@ my_suite/
     <fixture>.sql                   # SQL fixture
     apis/
       <api-name>.json              # Test-level API config override (optional)
+    entrypoints/
+      <name>.json                  # Test-level entrypoint override (optional)
     seed/
       seed.sql                     # Test-specific seed data (optional)
 ```
@@ -273,6 +275,41 @@ Define how Dojo triggers the SUT.
 | `path` | The SUT endpoint Dojo will call. May include query parameters (e.g. `/webhook?hub.mode=subscribe`). |
 | `follow_redirects` | Boolean. Defaults to `true`. Set to `false` to capture redirect responses (3xx) instead of following them. |
 
+### Test-level entrypoint override
+
+Place `test_foo/entrypoints/<name>.json` with only the fields that differ. The
+suite-level entrypoint is copied first, then the test JSON is merged on top.
+This works identically to test-level API overrides.
+
+Use this when multiple tests hit the same endpoint but differ in one header
+(HMAC signatures, API keys, auth tokens):
+
+Suite-level `entrypoints/webhook.json`:
+```json
+{
+  "type": "http",
+  "path": "/webhook",
+  "headers": {
+    "Content-Type": "application/json",
+    "X-Signature-Timestamp": "1234567890"
+  }
+}
+```
+
+Test-level `test_valid_sig/entrypoints/webhook.json` (only the diff):
+```json
+{
+  "headers": {
+    "X-Signature": "precomputed_base64_hmac"
+  }
+}
+```
+
+Both tests reference the same entrypoint name in the `.plan`:
+```text
+Perform -> entrypoints/webhook -> Payload: incoming.json -> ExpectStatus: "200"
+```
+
 ## The `.plan` DSL
 
 Syntax: `Action -> Target -> Clause: value -> Clause: value`
@@ -358,22 +395,45 @@ Perform -> entrypoints/auth -> ExpectStatus: "307"
 
 ### Example: testing webhook HMAC signature validation
 
-Test correct and incorrect signatures using separate entrypoints with different
-headers. The HMAC must be pre-computed from the known secret + timestamp + body:
+Test correct and incorrect signatures using the same base entrypoint with
+test-level overrides for the signature header:
 
+Suite-level `entrypoints/webhook.json`:
 ```json
 {
   "type": "http",
   "path": "/webhook",
   "headers": {
-    "X-Signature": "precomputed_base64_hmac",
+    "Content-Type": "application/json",
     "X-Signature-Timestamp": "1234567890"
   }
 }
 ```
 
+Test-level `test_valid_sig/entrypoints/webhook.json`:
+```json
+{
+  "headers": {
+    "X-Signature": "precomputed_base64_hmac"
+  }
+}
+```
+
 ```text
-Perform -> entrypoints/webhook_valid_sig -> Payload: incoming.json -> ExpectStatus: "200"
+Perform -> entrypoints/webhook -> Payload: incoming.json -> ExpectStatus: "200"
+```
+
+Test-level `test_invalid_sig/entrypoints/webhook.json`:
+```json
+{
+  "headers": {
+    "X-Signature": "INVALID"
+  }
+}
+```
+
+```text
+Perform -> entrypoints/webhook -> Payload: incoming.json -> ExpectStatus: "401"
 ```
 
 ### Example: binary payload
@@ -615,6 +675,7 @@ Dojo will:
 6. If using deep merge: only put the per-test diff in `test_<name>/`, keep the shared base at suite level.
 7. If the test needs seed data: create `test_<name>/seed/seed.sql`.
 8. If the test needs a different API config: create `test_<name>/apis/<api>.json` with only the overridden fields.
-9. Run: `go run cmd/dojo/main.go ./path/to/suite` and confirm the test passes.
+9. If the test needs different entrypoint headers (e.g., HMAC signatures, API keys): create `test_<name>/entrypoints/<name>.json` with only the overridden fields.
+10. Run: `go run cmd/dojo/main.go ./path/to/suite` and confirm the test passes.
 
 For deeper details, see [readme.md](readme.md).

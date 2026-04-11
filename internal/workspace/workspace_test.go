@@ -291,3 +291,54 @@ func TestLoadWorkspace_TestLevelAPIFileResolution(t *testing.T) {
 	}
 }
 
+func TestLoadWorkspace_TestLevelEntrypointOverride(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+
+	testutil.CreateFile(t, tmpDir, "suite/dojo.config", `{"concurrency":1}`)
+	testutil.CreateFile(t, tmpDir, "suite/entrypoints/webhook.json", `{
+		"type": "http",
+		"path": "/trigger",
+		"method": "POST",
+		"headers": {"Content-Type": "application/json", "X-Base": "yes"}
+	}`)
+
+	testutil.CreateFile(t, tmpDir, "suite/test_base/test.plan", "Perform -> entrypoints/webhook")
+
+	testutil.CreateFile(t, tmpDir, "suite/test_override/entrypoints/webhook.json", `{
+		"headers": {"X-Sig": "abc123"}
+	}`)
+	testutil.CreateFile(t, tmpDir, "suite/test_override/test.plan", "Perform -> entrypoints/webhook")
+
+	ws, err := workspace.LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace: %v", err)
+	}
+
+	suite := ws.Suites["suite"]
+
+	// test_base should have no test-level entrypoint overrides.
+	if len(suite.Tests["test_base"].Entrypoints) != 0 {
+		t.Errorf("test_base: expected 0 entrypoint overrides, got %d", len(suite.Tests["test_base"].Entrypoints))
+	}
+
+	// test_override should deep-merge: retain suite-level path, method,
+	// Content-Type and X-Base, and add X-Sig.
+	overrideEP, ok := suite.Tests["test_override"].Entrypoints["webhook"]
+	if !ok {
+		t.Fatal("test_override: expected 'webhook' entrypoint override")
+	}
+	if overrideEP.Path != "/trigger" {
+		t.Errorf("path not inherited: got %q, want /trigger", overrideEP.Path)
+	}
+	if overrideEP.Headers["Content-Type"] != "application/json" {
+		t.Errorf("Content-Type not inherited: got %q", overrideEP.Headers["Content-Type"])
+	}
+	if overrideEP.Headers["X-Base"] != "yes" {
+		t.Errorf("X-Base not inherited: got %q", overrideEP.Headers["X-Base"])
+	}
+	if overrideEP.Headers["X-Sig"] != "abc123" {
+		t.Errorf("X-Sig not merged: got %q", overrideEP.Headers["X-Sig"])
+	}
+}
+

@@ -102,8 +102,53 @@ Technical API configuration flows from suite to test:
   differ. The suite config is copied first, then the test JSON is applied on
   top, so you only specify what changes.
 
-For example, if every test shares the same WhatsApp API URL and mode but one
-test needs a different `default_response`, that test only carries:
+The same override pattern works for **entrypoints**:
+
+* `entrypoints/*.json` at the **suite level** defines shared entrypoint config
+  (type, path, method, headers).
+* `test_*/entrypoints/*.json` at the **test level** overlays only the fields
+  that differ. The suite entrypoint is copied first, then the test JSON is
+  merged on top.
+
+This is especially useful when multiple tests hit the same endpoint but differ
+only in a single header (e.g., HMAC signatures, API keys):
+
+Suite-level `entrypoints/secure.json` (shared base):
+```json
+{
+  "type": "http",
+  "method": "GET",
+  "path": "/secure"
+}
+```
+
+Test-level `test_secure_header_valid/entrypoints/secure.json` (only the diff):
+```json
+{
+  "headers": {
+    "X-Api-Key": "test_secret_key"
+  }
+}
+```
+
+Test-level `test_secure_header_invalid/entrypoints/secure.json`:
+```json
+{
+  "headers": {
+    "X-Api-Key": "wrong_key"
+  }
+}
+```
+
+Both tests reference the same entrypoint name in their `.plan`:
+```text
+Perform -> entrypoints/secure -> ExpectStatus: "200"
+```
+
+Everything else is inherited from the suite-level base.
+
+For API overrides, if every test shares the same WhatsApp API URL and mode but
+one test needs a different `default_response`, that test only carries:
 
 ```json
 {
@@ -192,8 +237,7 @@ tests/blackbox/
     health.json                          # GET health check (ExpectStatus assertion)
     not_found.json                       # GET endpoint returning 404
     auth_redirect.json                   # GET with follow_redirects: false
-    secure_valid.json                    # GET with X-Api-Key header (valid)
-    secure_invalid.json                  # GET with X-Api-Key header (invalid)
+    secure.json                          # GET /secure base (overridden per-test with different headers)
   seed/
     schema.sql                           # Shared DDL, run before all tests
   gemini_request.json                    # Suite-level fixture (deep-merge base)
@@ -273,9 +317,13 @@ tests/blackbox/
 
   test_secure_header_valid/
     secure_header_valid.plan             # GET /secure with X-Api-Key header -> ExpectStatus: "200"
+    entrypoints/
+      secure.json                        # Test-level override: X-Api-Key: "test_secret_key"
 
   test_secure_header_invalid/
     secure_header_invalid.plan           # GET /secure with wrong header -> ExpectStatus: "401"
+    entrypoints/
+      secure.json                        # Test-level override: X-Api-Key: "wrong_key"
 ```
 
 Key observations:
@@ -286,6 +334,9 @@ Key observations:
   The suite copy is the base; the test copy carries only the diff.
 * Only `test_user_update` has a local `apis/whatsapp.json` -- it overrides the
   suite WhatsApp config for that single test.
+* `test_secure_header_valid` and `test_secure_header_invalid` share a single
+  suite-level `entrypoints/secure.json`. Each test carries only a test-level
+  `entrypoints/secure.json` that overrides the `X-Api-Key` header.
 * `seed/` directories can exist at suite level (shared schema) and test level
   (test-specific data).
 * `test_image_upload` demonstrates binary fixture payloads -- the `.plan` uses
@@ -402,17 +453,45 @@ Perform -> entrypoints/auth -> ExpectStatus: "307"
 ```
 
 Custom headers can be set in the entrypoint config for testing HMAC signature
-validation:
+validation. Use test-level entrypoint overrides to share the base config and
+vary only the signature per test:
 
+Suite-level `entrypoints/webhook.json`:
 ```json
 {
   "type": "http",
   "path": "/webhook",
   "headers": {
-    "X-Signature": "precomputed_base64_hmac",
-    "X-Signature-Timestamp": "1234567890"
+    "X-Signature-Timestamp": "1234567890",
+    "Content-Type": "application/json"
   }
 }
+```
+
+Test-level `test_valid_sig/entrypoints/webhook.json`:
+```json
+{
+  "headers": {
+    "X-Signature": "precomputed_base64_hmac"
+  }
+}
+```
+
+```text
+Perform -> entrypoints/webhook -> Payload: incoming.json -> ExpectStatus: "200"
+```
+
+Test-level `test_invalid_sig/entrypoints/webhook.json`:
+```json
+{
+  "headers": {
+    "X-Signature": "INVALID"
+  }
+}
+```
+
+```text
+Perform -> entrypoints/webhook -> Payload: incoming.json -> ExpectStatus: "401"
 ```
 
 ### Postgres Wire Protocol Verification

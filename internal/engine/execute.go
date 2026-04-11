@@ -94,6 +94,9 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 	if !ok {
 		return fmt.Errorf("entrypoint '%s' not found", epName)
 	}
+	if testEP, ok := test.Entrypoints[epName]; ok {
+		ep = testEP
+	}
 
 	var payload []byte
 	var expectStatus int

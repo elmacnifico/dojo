@@ -179,9 +179,10 @@ type DojoConfig struct {
 
 // Test holds a distinct test configuration mapped by its folder.
 type Test struct {
-	APIs map[string]APIConfig
-	Plan string
-	Eval string
+	APIs        map[string]APIConfig
+	Entrypoints map[string]EntrypointConfig
+	Plan        string
+	Eval        string
 }
 
 // Suite is a collection of tests with unified global APIs and configuration.
@@ -338,7 +339,8 @@ func LoadWorkspace(baseDir string) (*Workspace, error) {
 				if te.IsDir() && strings.HasPrefix(te.Name(), "test_") {
 						testPath := filepath.Join(suitePath, te.Name())
 						test := &Test{
-							APIs: make(map[string]APIConfig),
+							APIs:        make(map[string]APIConfig),
+							Entrypoints: make(map[string]EntrypointConfig),
 						}
 
 						// Read Test APIs overrides
@@ -362,6 +364,28 @@ func LoadWorkspace(baseDir string) (*Workspace, error) {
 									return nil, fmt.Errorf("in test %s api %s: %w", te.Name(), name, err)
 								}
 								test.APIs[name] = cfg
+								}
+							}
+						}
+
+						// Read Test Entrypoint overrides
+						testEPDir := filepath.Join(testPath, "entrypoints")
+						if epEntries, err := os.ReadDir(testEPDir); err == nil {
+							for _, epe := range epEntries {
+								if strings.HasSuffix(epe.Name(), ".json") {
+									name := strings.TrimSuffix(epe.Name(), ".json")
+									var cfg EntrypointConfig
+									if suiteCfg, ok := suite.Entrypoints[name]; ok {
+										cfg = CopyEntrypointConfig(suiteCfg)
+									}
+									if err := loadJSON(filepath.Join(testEPDir, epe.Name()), &cfg); err != nil {
+										return nil, err
+									}
+									expandEntrypointConfig(&cfg)
+									if err := validateEntrypointConfig(name, &cfg); err != nil {
+										return nil, fmt.Errorf("in test %s: %w", te.Name(), err)
+									}
+									test.Entrypoints[name] = cfg
 								}
 							}
 						}
@@ -486,6 +510,25 @@ func cloneBytes(b []byte) []byte {
 	c := make([]byte, len(b))
 	copy(c, b)
 	return c
+}
+
+// CopyEntrypointConfig returns a deep copy of an [EntrypointConfig], cloning
+// the Headers map and ExpectedResponse pointer so mutations to the copy never
+// affect the original.
+func CopyEntrypointConfig(src EntrypointConfig) EntrypointConfig {
+	dst := src
+	if src.Headers != nil {
+		dst.Headers = make(map[string]string, len(src.Headers))
+		for k, v := range src.Headers {
+			dst.Headers[k] = v
+		}
+	}
+	if src.ExpectedResponse != nil {
+		e := *src.ExpectedResponse
+		e.Payload = cloneBytes(src.ExpectedResponse.Payload)
+		dst.ExpectedResponse = &e
+	}
+	return dst
 }
 
 // wireFixturesFromPlan reads Request and Respond clauses from the parsed plan

@@ -1,1 +1,1 @@
-Perform -> entrypoints/secure_invalid -> ExpectStatus: "401"
+Perform -> entrypoints/secure -> ExpectStatus: "401"
