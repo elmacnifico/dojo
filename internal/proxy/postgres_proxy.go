@@ -33,6 +33,7 @@ type PostgresProxy struct {
 	// DialAddr is host:port of the upstream Postgres TCP endpoint when forwarding (live mode).
 	// Empty means the proxy terminates the protocol locally (wire-level mock/sniffer).
 	DialAddr   string
+	Trace      bool
 	addr       string
 	listener   net.Listener
 	wg         sync.WaitGroup
@@ -179,6 +180,9 @@ func (rs *responseScanner) Read(b []byte) (n int, err error) {
 		if id != "" && lastQuery != "" && rs.proxy.matchTable != nil {
 			snapshot := make([]byte, len(rs.buffer))
 			copy(snapshot, rs.buffer)
+			if rs.proxy.Trace {
+				rs.proxy.log.Info("Postgres Live Response", "test_id", id, "query", truncatePayload(lastQuery, 500), "payload", truncatePayload(string(snapshot), 500))
+			}
 			rs.proxy.matchTable.ProcessResponse("postgres", id, "", []byte(lastQuery), snapshot)
 		}
 	}
@@ -297,6 +301,10 @@ func (p *PostgresProxy) acceptLoop() {
 					mr = p.matchTable.ProcessRequest("postgres", "", []byte(m.String), nil, "")
 				}
 
+				if p.Trace {
+					p.log.Info("Postgres Query", "test_id", mr.MatchedID, "query", truncatePayload(m.String, 500))
+				}
+
 				p.mu.Lock()
 				if pc, ok := p.conns[clientConn]; ok {
 					pc.id = mr.MatchedID
@@ -315,6 +323,10 @@ func (p *PostgresProxy) acceptLoop() {
 				var mr dojo.MatchResult
 				if p.matchTable != nil {
 					mr = p.matchTable.ProcessRequest("postgres", "", []byte(m.Query), nil, "")
+				}
+
+				if p.Trace {
+					p.log.Info("Postgres Parse", "test_id", mr.MatchedID, "query", truncatePayload(m.Query, 500))
 				}
 
 				p.mu.Lock()
@@ -344,6 +356,9 @@ func (p *PostgresProxy) acceptLoop() {
 							var mr dojo.MatchResult
 							if p.matchTable != nil {
 								mr = p.matchTable.ProcessRequest("postgres", "", []byte(resolvedSQL), nil, "")
+							}
+							if p.Trace {
+								p.log.Info("Postgres Bind", "test_id", mr.MatchedID, "query", truncatePayload(resolvedSQL, 500))
 							}
 							p.mu.Lock()
 							if pc, ok := p.conns[clientConn]; ok {

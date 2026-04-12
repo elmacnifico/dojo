@@ -35,6 +35,7 @@ type ExpectationSpec struct {
 	Path            string       // URL path after API name for HTTP matching (e.g. "/media_foo")
 	Response        *DefaultResponse
 	RequiresEval    bool
+	MaxCalls        int
 }
 
 // APIConfig controls the mode and URL behavior for an outbound SUT dependency.
@@ -208,6 +209,13 @@ type Workspace struct {
 	GlobalEval string
 }
 
+// LLMUsage tracks token usage for AI evaluations and live API calls.
+type LLMUsage struct {
+	PromptTokens     int `json:"prompt_tokens" yaml:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens" yaml:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens" yaml:"total_tokens"`
+}
+
 // TestResult captures the outcome of a single test execution.
 type TestResult struct {
 	TestName   string        `json:"test_name" yaml:"test_name"`
@@ -216,6 +224,7 @@ type TestResult struct {
 	Reason     string        `json:"reason,omitempty" yaml:"reason,omitempty"`
 	Expected   string        `json:"expected,omitempty" yaml:"expected,omitempty"`
 	Actual     string        `json:"actual,omitempty" yaml:"actual,omitempty"`
+	LLMUsage   *LLMUsage     `json:"llm_usage,omitempty" yaml:"llm_usage,omitempty"`
 }
 
 // TestFailure captures a failed assertion during test execution.
@@ -520,6 +529,7 @@ func CopyAPIConfig(src APIConfig) APIConfig {
 				dst.OrderedExpectations[i].Response = &r
 			}
 			dst.OrderedExpectations[i].RequiresEval = s.RequiresEval
+			dst.OrderedExpectations[i].MaxCalls = s.MaxCalls
 		}
 	}
 	return dst
@@ -594,11 +604,20 @@ func WireFixturesFromPlan(doc *ParsedDocument, test *Test, suite *Suite, testPat
 				spec.ExpectedRequest = &PayloadSpec{File: *clause.Value}
 				hasRequest = true
 			case "respond":
+				if cfg.Mode == "live" {
+					return fmt.Errorf("API %q is live, cannot use Respond clause", apiName)
+				}
 				code := 200
 				if cfg.DefaultResponse != nil {
 					code = cfg.DefaultResponse.Code
 				}
 				spec.Response = &DefaultResponse{File: *clause.Value, Code: code}
+			case "maxcalls":
+				var max int
+				if _, err := fmt.Sscanf(*clause.Value, "%d", &max); err != nil {
+					return fmt.Errorf("API %q MaxCalls must be an integer, got %q", apiName, *clause.Value)
+				}
+				spec.MaxCalls = max
 			}
 		}
 

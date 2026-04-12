@@ -16,6 +16,15 @@ go run ./cmd/dojo/main.go ./example/tests/blackbox
 
 The example suite includes a **`startup.plan`** that expects one Gemini call from the example SUT during boot (see `example/sut/main.go`).
 
+### Tracing & LLM Usage
+
+Use the `--trace` flag to print truncated HTTP and Postgres request/response payloads correlated by test ID.
+Dojo automatically parses and aggregates LLM token usage from live Gemini and OpenAI responses, exposing them in the JSON output.
+
+```bash
+go run ./cmd/dojo/main.go --trace --format json ./example/tests/blackbox
+```
+
 ## Repository layout
 
 | Path | Purpose |

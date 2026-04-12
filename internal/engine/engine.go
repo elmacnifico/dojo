@@ -37,6 +37,13 @@ func WithVerbose(v bool) EngineOption {
 	}
 }
 
+// WithTrace enables tracing of HTTP and Postgres payloads.
+func WithTrace(t bool) EngineOption {
+	return func(e *Engine) {
+		e.trace = t
+	}
+}
+
 // StartupPhaseReport describes the outcome of an optional startup.plan phase
 // for console or summary reporting. When Ran is false, DurationMs is zero.
 type StartupPhaseReport struct {
@@ -54,6 +61,7 @@ type Engine struct {
 	sutCancel     context.CancelFunc
 	log           *slog.Logger
 	verbose       bool
+	trace         bool
 
 	sutDead     atomic.Bool
 	sutDeadCh   chan struct{} // closed when SUT crashes; used to unblock waiting tests
@@ -93,6 +101,8 @@ func NewEngine(ws *workspace.Workspace, opts ...EngineOption) *Engine {
 	}
 	e.HTTPProxy.SetLogger(e.log)
 	e.PostgresProxy.SetLogger(e.log)
+	e.HTTPProxy.Trace = e.trace
+	e.PostgresProxy.Trace = e.trace
 	return e
 }
 
@@ -377,7 +387,7 @@ func (e *Engine) RunSuite(ctx context.Context, suiteName string, onResult func(w
 				}
 
 				start := time.Now()
-				err := e.executeTest(ctx, id, t, suite, suiteName)
+				usage, err := e.executeTest(ctx, id, t, suite, suiteName)
 				dur := time.Since(start)
 
 				mu.Lock()
@@ -386,6 +396,9 @@ func (e *Engine) RunSuite(ctx context.Context, suiteName string, onResult func(w
 				tr := workspace.TestResult{
 					TestName:   id,
 					DurationMs: dur.Milliseconds(),
+				}
+				if usage.TotalTokens > 0 {
+					tr.LLMUsage = &usage
 				}
 
 				if err != nil {

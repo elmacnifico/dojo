@@ -24,6 +24,9 @@ type HTTPProxy struct {
 	// [defaultUpstreamTimeout]. Set by the engine from the suite's timeout config.
 	UpstreamTimeout time.Duration
 
+	// Trace enables debug logging of HTTP request/response payloads.
+	Trace bool
+
 	addr       string
 	listener   net.Listener
 	mux        *http.ServeMux
@@ -53,6 +56,13 @@ func (p *HTTPProxy) Listen(ctx context.Context, matchTable dojo.MatchTable) erro
 // Trigger is a no-op for HTTPProxy.
 func (p *HTTPProxy) Trigger(ctx context.Context, payload []byte, endpointConfig map[string]any) error {
 	return nil
+}
+
+func truncatePayload(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // Start boots the HTTP Proxy listener. The provided context controls the server lifecycle;
@@ -86,10 +96,18 @@ func (p *HTTPProxy) Start(ctx context.Context, listenAddr string, matchTable doj
 			reqURL = "/" + strings.Join(pathParts[1:], "/")
 		}
 
+		if p.Trace {
+			p.log.Info("HTTP Request", "api", apiName, "path", reqURL, "payload", truncatePayload(string(bodyBytes), 500))
+		}
+
 		m := p.matchTable.ProcessRequest("http", apiName, bodyBytes, r.Header, reqURL)
 		if m.Err != nil {
 			http.Error(w, m.Err.Error(), http.StatusBadGateway)
 			return
+		}
+
+		if p.Trace && m.IsMock {
+			p.log.Info("HTTP Mock Response", "api", apiName, "test_id", m.MatchedID, "payload", truncatePayload(string(m.MockResponse), 500))
 		}
 
 		if m.IsMock {
@@ -169,6 +187,11 @@ func (p *HTTPProxy) Start(ctx context.Context, listenAddr string, matchTable doj
 			copy(reqCopy, bodyBytes)
 			matchedID := m.MatchedID
 			api := apiName
+
+			if p.Trace {
+				p.log.Info("HTTP Live Response", "api", api, "test_id", matchedID, "payload", truncatePayload(string(respBytes), 500))
+			}
+
 			go p.matchTable.ProcessResponse("http", matchedID, api, reqCopy, respBytes)
 		}
 	})

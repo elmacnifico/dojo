@@ -155,3 +155,104 @@ func TestSplitPhases_TwoPhases(t *testing.T) {
 		t.Fatalf("expected phase 1 target = postgres, got %q", phases[1].perform.Target)
 	}
 }
+
+func TestParseUsage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		payload  []byte
+		want     workspace.LLMUsage
+		wantFound bool
+	}{
+		{
+			name:     "OpenAI format",
+			payload:  []byte(`{"usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}}`),
+			want:     workspace.LLMUsage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30},
+			wantFound: true,
+		},
+		{
+			name:     "Gemini format",
+			payload:  []byte(`{"usageMetadata": {"promptTokenCount": 15, "candidatesTokenCount": 25, "totalTokenCount": 40}}`),
+			want:     workspace.LLMUsage{PromptTokens: 15, CompletionTokens: 25, TotalTokens: 40},
+			wantFound: true,
+		},
+		{
+			name:     "No usage data",
+			payload:  []byte(`{"choices": [{"text": "hello"}]}`),
+			want:     workspace.LLMUsage{},
+			wantFound: false,
+		},
+		{
+			name:     "Invalid JSON",
+			payload:  []byte(`{invalid`),
+			want:     workspace.LLMUsage{},
+			wantFound: false,
+		},
+		{
+			name:     "Partial OpenAI format",
+			payload:  []byte(`{"usage": {"prompt_tokens": 10}}`),
+			want:     workspace.LLMUsage{PromptTokens: 10},
+			wantFound: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, found := parseUsage(tt.payload)
+			if found != tt.wantFound {
+				t.Errorf("parseUsage() found = %v, want %v", found, tt.wantFound)
+			}
+			if got != tt.want {
+				t.Errorf("parseUsage() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestActiveTest_MarkFulfilled_MaxCalls(t *testing.T) {
+	t.Parallel()
+
+	at := &ActiveTest{
+		Expectations: map[string][]*Expectation{
+			"api1": {
+				{Target: "api1", MaxCalls: 3},
+			},
+		},
+		done: make(chan struct{}),
+	}
+
+	// First call
+	at.MarkFulfilled("api1", 0, nil)
+	exp := at.Expectations["api1"][0]
+	if exp.MatchCount != 1 {
+		t.Errorf("expected MatchCount 1, got %d", exp.MatchCount)
+	}
+	if exp.Fulfilled {
+		t.Error("expected Fulfilled false after 1 call")
+	}
+
+	// Second call
+	at.MarkFulfilled("api1", 0, nil)
+	if exp.MatchCount != 2 {
+		t.Errorf("expected MatchCount 2, got %d", exp.MatchCount)
+	}
+	if exp.Fulfilled {
+		t.Error("expected Fulfilled false after 2 calls")
+	}
+
+	// Third call
+	at.MarkFulfilled("api1", 0, nil)
+	if exp.MatchCount != 3 {
+		t.Errorf("expected MatchCount 3, got %d", exp.MatchCount)
+	}
+	if !exp.Fulfilled {
+		t.Error("expected Fulfilled true after 3 calls")
+	}
+
+	// Fourth call (should be no-op because it's fulfilled)
+	at.MarkFulfilled("api1", 0, nil)
+	if exp.MatchCount != 3 {
+		t.Errorf("expected MatchCount 3 after fulfilled, got %d", exp.MatchCount)
+	}
+}

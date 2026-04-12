@@ -27,6 +27,7 @@ func main() {
 	formatFlag := flag.String("format", "console", "Output format: console, json, or jsonl")
 	verboseFlag := flag.Bool("verbose", false, "Show debug logs and SUT output")
 	vFlag := flag.Bool("v", false, "Shorthand for --verbose")
+	traceFlag := flag.Bool("trace", false, "Trace log HTTP and Postgres request/response payloads")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stdout, "Dojo: The Universal Black-Box Contract Engine\n\n")
@@ -50,6 +51,7 @@ func main() {
 	}
 
 	verbose := *verboseFlag || *vFlag
+	trace := *traceFlag
 	outDir := *outputDir
 	if outDir == "" {
 		outDir = *oFlag
@@ -129,7 +131,7 @@ func main() {
 		logLevel = slog.LevelDebug
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
-	eng = engine.NewEngine(ws, engine.WithLogger(logger), engine.WithVerbose(verbose))
+	eng = engine.NewEngine(ws, engine.WithLogger(logger), engine.WithVerbose(verbose), engine.WithTrace(trace))
 
 	startupReport, err := eng.StartProxies(ctx, suiteName)
 	if err != nil {
@@ -161,10 +163,14 @@ func main() {
 			}
 		case "console":
 			dur := formatDuration(tr.DurationMs)
+			usageStr := ""
+			if tr.LLMUsage != nil && (tr.LLMUsage.PromptTokens > 0 || tr.LLMUsage.CompletionTokens > 0) {
+				usageStr = fmt.Sprintf(" [%d tokens]", tr.LLMUsage.TotalTokens)
+			}
 			if tr.Status == "pass" {
-				fmt.Printf("  PASS  %s  (%s)\n", tr.TestName, dur)
+				fmt.Printf("  PASS  %s  (%s)%s\n", tr.TestName, dur, usageStr)
 			} else {
-				fmt.Printf("  FAIL  %s  (%s): %s\n", tr.TestName, dur, tr.Reason)
+				fmt.Printf("  FAIL  %s  (%s)%s: %s\n", tr.TestName, dur, usageStr, tr.Reason)
 			}
 		}
 	}

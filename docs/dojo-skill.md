@@ -340,7 +340,8 @@ Syntax: `Action -> Target -> Clause: value -> Clause: value`
 | `Query:` | Perform (postgres) | SQL fixture file to execute against the live database. |
 | `Expect:` | Perform (postgres) | Assertion on query result: `"N"` for row count, `file.json` for JSON comparison, or omit for OK-only. |
 | `Request:` | Expect | Fixture file containing the expected outbound payload. |
-| `Respond:` | Expect | Fixture file returned as the mock response body. |
+| `Respond:` | Expect | Fixture file returned as the mock response body. Cannot be used with live APIs. |
+| `MaxCalls:` | Expect | Number of times this expectation must be matched before it is fulfilled. Defaults to 1. |
 | `Evaluate Response` | Expect | No value. Triggers AI evaluation using `eval.md`. |
 
 ### Example: standard test
@@ -769,6 +770,7 @@ go run cmd/dojo/main.go --format json -o results/ ./path/to/my_suite
 |------|--------|-------------|
 | `--format` | `console` (default), `json`, `jsonl` | Output format. |
 | `-o` / `--output` | directory path | Write `summary.json` and `summary.md` to disk. |
+| `--trace` | none | Trace log HTTP and Postgres request/response payloads (truncated) correlated by test id. |
 
 Dojo will:
 1. Read `dojo.config` and set proxy env vars.

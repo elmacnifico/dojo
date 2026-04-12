@@ -16,6 +16,8 @@ type Expectation struct {
 	Error        error
 	RequiresEval bool
 	Deadline     time.Duration
+	MaxCalls     int
+	MatchCount   int
 }
 
 // ActiveTest represents a currently executing test within the Suite.
@@ -26,6 +28,8 @@ type ActiveTest struct {
 	Ctx          context.Context
 	Expectations map[string][]*Expectation
 	Variables    map[string]any
+	APIUsage     map[string]workspace.LLMUsage // Added for LLM usage tracking
+	TotalUsage   workspace.LLMUsage            // Added for total LLM usage
 	mu           sync.Mutex
 	done         chan struct{}
 }
@@ -44,8 +48,21 @@ func (a *ActiveTest) MarkFulfilled(apiName string, idx int, err error) {
 	if exp.Fulfilled {
 		return
 	}
-	exp.Fulfilled = true
-	exp.Error = err
+	
+	exp.MatchCount++
+	
+	targetCalls := exp.MaxCalls
+	if targetCalls <= 0 {
+		targetCalls = 1
+	}
+
+	if exp.MatchCount >= targetCalls {
+		exp.Fulfilled = true
+	}
+	if err != nil {
+		exp.Error = err
+		exp.Fulfilled = true // error always fulfills
+	}
 
 	allDone := true
 	for _, slice := range a.Expectations {

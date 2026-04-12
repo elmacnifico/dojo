@@ -55,7 +55,8 @@ func splitPhases(lines []workspace.ParsedLine) []planPhase {
 	return phases
 }
 
-func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Test, suite *workspace.Suite, suiteName string) error {
+func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Test, suite *workspace.Suite, suiteName string) (workspace.LLMUsage, error) {
+	var usage workspace.LLMUsage
 	livePostgres := false
 	var livePGURL string
 	for _, api := range suite.APIs {
@@ -69,22 +70,22 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 
 	if livePostgres {
 		if err := e.runSeeds(livePGURL, filepath.Join(e.Workspace.BaseDir, suiteName, id, "seed")); err != nil {
-			return fmt.Errorf("test seeding failed: %w", err)
+			return usage, fmt.Errorf("test seeding failed: %w", err)
 		}
 	}
 
 	doc, err := workspace.ParsePlan(test.Plan)
 	if err != nil {
-		return fmt.Errorf("failed to parse plan: %w", err)
+		return usage, fmt.Errorf("failed to parse plan: %w", err)
 	}
 
 	if len(doc.Lines) == 0 || strings.ToLower(doc.Lines[0].Action) != "perform" {
-		return fmt.Errorf("plan must start with a Perform action")
+		return usage, fmt.Errorf("plan must start with a Perform action")
 	}
 
 	phases := splitPhases(doc.Lines)
 	if len(phases) == 0 {
-		return fmt.Errorf("plan must start with a Perform action")
+		return usage, fmt.Errorf("plan must start with a Perform action")
 	}
 
 	// Phase 1: entrypoint trigger + observer expectations.
@@ -92,26 +93,26 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 
 	active, ep, payload, expectStatus, err := e.prepareEntrypoint(ctx, id, test, suite, suiteName, firstPhase)
 	if err != nil {
-		return err
+		return usage, err
 	}
 
 	e.Registry.Register(id, active)
 	defer e.Registry.Unregister(id)
 
 	if err := e.triggerEntrypoint(ctx, suite, ep, payload, expectStatus); err != nil {
-		return err
+		return active.TotalUsage, err
 	}
 
 	if err := e.awaitPhaseExpectations(ctx, active); err != nil {
-		return err
+		return active.TotalUsage, err
 	}
 
 	// Subsequent phases: inline assertions (e.g. Perform -> postgres).
 	if err := e.executeSubsequentPhases(ctx, active, id, suiteName, phases[1:], livePGURL); err != nil {
-		return err
+		return active.TotalUsage, err
 	}
 
-	return nil
+	return active.TotalUsage, nil
 }
 
 func (e *Engine) prepareEntrypoint(ctx context.Context, id string, test *workspace.Test, suite *workspace.Suite, suiteName string, phase planPhase) (*ActiveTest, workspace.EntrypointConfig, []byte, int, error) {
@@ -222,6 +223,7 @@ func (e *Engine) prepareEntrypoint(ctx context.Context, id string, test *workspa
 		Ctx:          ctx,
 		Expectations: make(map[string][]*Expectation),
 		Variables:    make(map[string]any),
+		APIUsage:     make(map[string]workspace.LLMUsage),
 		done:         make(chan struct{}),
 	}
 	
@@ -251,6 +253,12 @@ func (e *Engine) prepareEntrypoint(ctx context.Context, id string, test *workspa
 		for _, clause := range l.Clauses {
 			if strings.ToLower(clause.Key) == "evaluate response" {
 				exp.RequiresEval = true
+			}
+			if strings.ToLower(clause.Key) == "maxcalls" && clause.Value != nil {
+				var max int
+				if _, err := fmt.Sscanf(*clause.Value, "%d", &max); err == nil {
+					exp.MaxCalls = max
+				}
 			}
 		}
 		active.Expectations[apiName] = append(active.Expectations[apiName], exp)
@@ -311,6 +319,7 @@ func (e *Engine) prepareStartupPlan(ctx context.Context, suite *workspace.Suite,
 		Suite:        suite,
 		Ctx:          ctx,
 		Expectations: make(map[string][]*Expectation),
+		APIUsage:     make(map[string]workspace.LLMUsage),
 		done:         make(chan struct{}),
 	}
 
@@ -333,6 +342,12 @@ func (e *Engine) prepareStartupPlan(ctx context.Context, suite *workspace.Suite,
 		for _, clause := range l.Clauses {
 			if strings.ToLower(clause.Key) == "evaluate response" {
 				exp.RequiresEval = true
+			}
+			if strings.ToLower(clause.Key) == "maxcalls" && clause.Value != nil {
+				var max int
+				if _, err := fmt.Sscanf(*clause.Value, "%d", &max); err == nil {
+					exp.MaxCalls = max
+				}
 			}
 		}
 		active.Expectations[apiName] = append(active.Expectations[apiName], exp)

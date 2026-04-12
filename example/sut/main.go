@@ -197,6 +197,7 @@ func main() {
 	http.HandleFunc("/upload", handleUpload)
 	http.HandleFunc("/media-process", handleMediaProcess)
 	http.HandleFunc("/ask", handleAsk)
+	http.HandleFunc("/maxcalls", handleMaxCalls)
 
 	port := ":8080"
 	go waitHealthThenStartupProbe()
@@ -567,4 +568,44 @@ func handleMediaProcess(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
 	w.Write([]byte(fmt.Sprintf(`{"status":"ok","description":"%s","bytes":%d}`, description, len(mediaBytes))))
+}
+
+func handleMaxCalls(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read body: "+err.Error(), 400)
+		return
+	}
+	var req struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || req.Count <= 0 {
+		http.Error(w, "missing or invalid count", 400)
+		return
+	}
+	fmt.Printf("[SUT] /maxcalls count=%d\n", req.Count)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	geminiURL := os.Getenv("API_GEMINI_URL")
+	if geminiURL == "" {
+		http.Error(w, "API_GEMINI_URL not set", 500)
+		return
+	}
+
+	for i := 0; i < req.Count; i++ {
+		greq := buildGeminiRequest("user123", fmt.Sprintf("Query %d", i))
+		payload, err := json.Marshal(greq)
+		if err == nil {
+			target := geminiURL + "/v1beta/models/gemini-2.5-flash:generateContent"
+			resp, err := client.Post(target, "application/json", bytes.NewReader(payload))
+			if err == nil {
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	w.Write([]byte(`{"status":"ok"}`))
 }

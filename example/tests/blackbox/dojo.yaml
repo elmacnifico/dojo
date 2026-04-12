@@ -25,6 +25,10 @@ apis:
       body: '{"messaging_product":"whatsapp","messages":[{"id":"wamid.test"}]}'
 
 entrypoints:
+  maxcalls:
+    type: http
+    method: POST
+    path: "/maxcalls"
   auth_redirect:
     type: http
     method: GET
