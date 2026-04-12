@@ -676,4 +676,9 @@ in-flight tests and reports each as failed with the crash reason.
 | `example/tests/blackbox/` | Integration-style example tests + `startup.plan`                                  |
 | `docs/dojo-skill.md`      | Long-form suite-authoring reference (shipped; Cursor skill install noted in-file) |
 
+---
+
+## License
+
+Licensed under the [MIT License](LICENSE).
 
