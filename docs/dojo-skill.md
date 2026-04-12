@@ -1,7 +1,7 @@
 ---
 name: dojo
 description: >-
-  Write and debug Dojo black-box suites: .plan DSL, startup.plan, apis/, dojo.config,
+  Write and debug Dojo black-box suites: .plan DSL, startup.plan, dojo.yaml,
   entrypoints, fixtures, deep-merge, matching. Use for Dojo engine work, example/tests/blackbox,
   example/sut, or consumer repos (e.g. Proofcoach dojo/blackbox).
 ---
@@ -41,11 +41,10 @@ Key rules:
 - Each test directory has exactly one `.plan` file (any name, `.plan` extension).
 - Fixture files at both suite and test level with the same name are deep-merged.
 - `seed/` can exist at suite level (shared) and test level (per-test data).
-- **Ordered `Expect` + concurrency:** Several `Expect -> sameAPI` lines are matched in declaration order. The engine serializes mock correlation (`ProcessRequest` / `ProcessResponse`) so parallel SUT goroutines cannot double-fulfill the same expectation index. Prefer **specific** request JSON for HTTP subset match—tiny fixtures (e.g. only `generationConfig`) can match unrelated outbound calls and make suites flaky when the SUT runs background work.
 
 ### `startup.plan` (optional)
 
-Suite root file **`startup.plan`** may contain **only** `Expect` lines (same syntax as in test plans). Dojo runs it after proxies and env are ready and the SUT accepts TCP, **before** any `RunSuite` test. If it fails, no tests run. Full behavior and logging: repo **`docs/startup-plan.md`**. Example: **`example/tests/blackbox/startup.plan`** and SUT probe in **`example/sut/main.go`**.
+Suite root file **`startup.plan`** may contain **only** `Expect` lines (same syntax as in test plans). Dojo runs it after proxies and env are ready and the SUT accepts TCP, **before** any `RunSuite` test. If it fails, no tests run. Full behavior and logging is documented in the repo **`readme.md`**. Example: **`example/tests/blackbox/startup.plan`** and SUT probe in **`example/sut/main.go`**.
 
 ## dojo.yaml
 
@@ -100,14 +99,11 @@ ENVIRONMENT=production
 
 ### Evaluator config (optional)
 
-```json
-{
-  "evaluator": {
-    "provider": "gemini",
-    "model": "gemini-2.5-flash",
-    "api_key_env": "GEMINI_API_KEY"
-  }
-}
+```yaml
+evaluator:
+  provider: gemini
+  model: gemini-2.5-flash
+  api_key_env: GEMINI_API_KEY
 ```
 
 Supported providers: `gemini`, `openai`, `anthropic`.
@@ -126,26 +122,26 @@ timeouts:
 | Key | Default | Controls |
 |-----|---------|----------|
 | `perform` | `5s` | Perform trigger HTTP call and live upstream proxy timeout. |
-| `expect` | `2s` | How long each Expect waits before timing out. Per-API `timeout` in `apis/*.json` overrides this. |
+| `expect` | `2s` | How long each Expect waits before timing out. Per-API `timeout` in `dojo.yaml` overrides this. |
 | `sut_startup` | `90s` | Max wait for SUT to accept TCP connections. |
 | `sut_shutdown` | `5s` | Grace period when killing the SUT process. |
 | `ai_evaluator` | `30s` | Timeout for AI evaluation LLM calls. |
 
 For real LLM suites (not mocked), set per-API timeout:
 
-```json
-{
-  "mode": "live",
-  "timeout": "30s"
-}
+```yaml
+apis:
+  gemini:
+    mode: live
+    timeout: 30s
 ```
 
-Or per-test override in `test_slow/apis/gemini.json`:
+Or per-test override in `test_slow/dojo.yaml`:
 
-```json
-{
-  "timeout": "60s"
-}
+```yaml
+apis:
+  gemini:
+    timeout: "60s"
 ```
 
 ## API Config in `dojo.yaml`
@@ -169,12 +165,12 @@ test-specific `Respond:` fixture). The SUT never reaches the real service.
 
 ### Live Postgres API
 
-```json
-{
-  "mode": "live",
-  "protocol": "postgres",
-  "url": "postgres://user:pass@host:5432/db?sslmode=disable"
-}
+```yaml
+apis:
+  postgres:
+    mode: live
+    protocol: postgres
+    url: "postgres://user:pass@host:5432/db?sslmode=disable"
 ```
 
 Dojo proxies traffic to the real Postgres instance while sniffing queries for
@@ -195,14 +191,13 @@ matching.
 expansion using the process environment. This is useful for referencing other
 API proxy addresses inside a mock response.
 
-```json
-{
-  "mode": "mock",
-  "default_response": {
-    "code": 200,
-    "body": "{\"url\": \"$API_MEDIA_DOWNLOAD_URL/file.jpg\"}"
-  }
-}
+```yaml
+apis:
+  media_lookup:
+    mode: mock
+    default_response:
+      code: 200
+      body: '{"url": "$API_MEDIA_DOWNLOAD_URL/file.jpg"}'
 ```
 
 At runtime `$API_MEDIA_DOWNLOAD_URL` resolves to the actual proxy address,
@@ -216,15 +211,14 @@ Mock APIs can serve binary files (images, PDFs, etc.) using `file` and
 the directory containing the API config file (test dir first, suite dir
 fallback).
 
-```json
-{
-  "mode": "mock",
-  "default_response": {
-    "code": 200,
-    "file": "photo.jpg",
-    "content_type": "image/jpeg"
-  }
-}
+```yaml
+apis:
+  media:
+    mode: mock
+    default_response:
+      code: 200
+      file: photo.jpg
+      content_type: image/jpeg
 ```
 
 | Field | Description |
@@ -236,8 +230,8 @@ Binary file payloads skip `$VAR` expansion to avoid corrupting binary data.
 
 ### Test-level API override
 
-Place `test_foo/apis/<api-name>.json` with only the fields that differ. Suite
-config is copied first; then the test JSON is merged on top. Test-level
+Place `test_foo/dojo.yaml` with only the fields that differ under `apis:`. Suite
+config is copied first; then the test YAML is merged on top. Test-level
 overrides apply even when the plan has no `Expect` clause for that API -- Dojo
 uses the override for mock responses whenever that test is the only active test.
 
@@ -245,21 +239,19 @@ This is the primary mechanism for serving test-specific binary fixtures:
 
 ```text
 test_image_analysis/
-  apis/
-    media_download.json          # Overrides the suite-level mock with a binary file
+  dojo.yaml                      # Overrides the suite-level mock with a binary file
   test_image.jpg                 # The binary file served by the override
   image_analysis.plan
 ```
 
-`test_image_analysis/apis/media_download.json`:
-```json
-{
-  "default_response": {
-    "code": 200,
-    "file": "test_image.jpg",
-    "content_type": "image/jpeg"
-  }
-}
+`test_image_analysis/dojo.yaml`:
+```yaml
+apis:
+  media_download:
+    default_response:
+      code: 200
+      file: "test_image.jpg"
+      content_type: "image/jpeg"
 ```
 
 The `file` path is resolved relative to the **test directory first**, then the
@@ -287,37 +279,35 @@ entrypoints:
 
 ### Test-level entrypoint override
 
-Place `test_foo/entrypoints/<name>.json` with only the fields that differ. The
-suite-level entrypoint is copied first, then the test JSON is merged on top.
+Place `test_foo/dojo.yaml` with only the fields that differ under `entrypoints:`. The
+suite-level entrypoint is copied first, then the test YAML is merged on top.
 This works identically to test-level API overrides.
 
 Use this when multiple tests hit the same endpoint but differ in one header
 (HMAC signatures, API keys, auth tokens):
 
-Suite-level `entrypoints/webhook.json`:
-```json
-{
-  "type": "http",
-  "path": "/webhook",
-  "headers": {
-    "Content-Type": "application/json",
-    "X-Signature-Timestamp": "1234567890"
-  }
-}
+Suite-level `dojo.yaml`:
+```yaml
+entrypoints:
+  webhook:
+    type: http
+    path: "/webhook"
+    headers:
+      Content-Type: "application/json"
+      X-Signature-Timestamp: "1234567890"
 ```
 
-Test-level `test_valid_sig/entrypoints/webhook.json` (only the diff):
-```json
-{
-  "headers": {
-    "X-Signature": "precomputed_base64_hmac"
-  }
-}
+Test-level `test_valid_sig/dojo.yaml` (only the diff):
+```yaml
+entrypoints:
+  webhook:
+    headers:
+      X-Signature: "precomputed_base64_hmac"
 ```
 
 Both tests reference the same entrypoint name in the `.plan`:
 ```text
-Perform -> POST /webhook -> Payload: incoming.json -> Status: 200
+Perform -> entrypoints/webhook -> Payload: incoming.json -> ExpectStatus: "200"
 ```
 
 ## The `.plan` DSL
@@ -358,7 +348,13 @@ Line by line:
 1. POST `incoming.json` to the SUT's `/trigger` endpoint.
 2. SUT must issue a SQL query matching `postgres_request.sql`.
 3. SUT must call Gemini with a body matching `gemini_request.json`; Dojo returns `gemini_response.json`.
-4. SUT must call WhatsApp with a body matching `whatsapp_request.json`; Dojo returns `apis/whatsapp.json`'s `default_response`.
+4. SUT must call WhatsApp with a body matching `whatsapp_request.json`; Dojo returns the API's `default_response` from `dojo.yaml`.
+
+**Convention-based fixture resolution:** When an `Expect` line omits `Request:`
+and `Respond:` clauses, Dojo resolves fixtures by naming convention:
+`<api>_request.json` (or `<api>_request.sql` for Postgres) and
+`<api>_response.json`. The files are looked up in the test directory first,
+then the suite directory, with deep-merge if both exist.
 
 ### Example: ExpectStatus (health check)
 
@@ -369,13 +365,13 @@ verification, and testing error responses.
 Perform -> entrypoints/health -> ExpectStatus: "200"
 ```
 
-With `entrypoints/health.json`:
-```json
-{
-  "type": "http",
-  "method": "GET",
-  "path": "/"
-}
+With `dojo.yaml` containing:
+```yaml
+entrypoints:
+  health:
+    type: http
+    method: GET
+    path: "/"
 ```
 
 Without `ExpectStatus`, Dojo fails the test on any status >= 400. With
@@ -391,13 +387,13 @@ Perform -> entrypoints/webhook_bad_token -> ExpectStatus: "403"
 To test that an auth endpoint returns a redirect without following it, set
 `follow_redirects: false` in the entrypoint config:
 
-```json
-{
-  "type": "http",
-  "method": "GET",
-  "path": "/auth?userId=1",
-  "follow_redirects": false
-}
+```yaml
+entrypoints:
+  auth:
+    type: http
+    method: GET
+    path: "/auth?userId=1"
+    follow_redirects: false
 ```
 
 ```text
@@ -409,42 +405,39 @@ Perform -> entrypoints/auth -> ExpectStatus: "307"
 Test correct and incorrect signatures using the same base entrypoint with
 test-level overrides for the signature header:
 
-Suite-level `entrypoints/webhook.json`:
-```json
-{
-  "type": "http",
-  "path": "/webhook",
-  "headers": {
-    "Content-Type": "application/json",
-    "X-Signature-Timestamp": "1234567890"
-  }
-}
+Suite-level `dojo.yaml`:
+```yaml
+entrypoints:
+  webhook:
+    type: http
+    path: "/webhook"
+    headers:
+      Content-Type: "application/json"
+      X-Signature-Timestamp: "1234567890"
 ```
 
-Test-level `test_valid_sig/entrypoints/webhook.json`:
-```json
-{
-  "headers": {
-    "X-Signature": "precomputed_base64_hmac"
-  }
-}
-```
-
-```text
-Perform -> POST /webhook -> Payload: incoming.json -> Status: 200
-```
-
-Test-level `test_invalid_sig/entrypoints/webhook.json`:
-```json
-{
-  "headers": {
-    "X-Signature": "INVALID"
-  }
-}
+Test-level `test_valid_sig/dojo.yaml`:
+```yaml
+entrypoints:
+  webhook:
+    headers:
+      X-Signature: "precomputed_base64_hmac"
 ```
 
 ```text
-Perform -> POST /webhook -> Payload: incoming.json -> Status: 401
+Perform -> entrypoints/webhook -> Payload: incoming.json -> ExpectStatus: "200"
+```
+
+Test-level `test_invalid_sig/dojo.yaml`:
+```yaml
+entrypoints:
+  webhook:
+    headers:
+      X-Signature: "INVALID"
+```
+
+```text
+Perform -> entrypoints/webhook -> Payload: incoming.json -> ExpectStatus: "401"
 ```
 
 ### Example: binary payload
@@ -469,15 +462,15 @@ Perform -> POST /media-process -> Payload: incoming.json
 Expect -> gemini
 ```
 
-With `test_media_process/apis/media.json`:
-```json
-{
-  "default_response": {
-    "code": 200,
-    "file": "photo.jpg",
-    "content_type": "image/jpeg"
-  }
-}
+With `test_media_process/dojo.yaml` overriding the media API:
+
+```yaml
+apis:
+  media:
+    default_response:
+      code: 200
+      file: photo.jpg
+      content_type: image/jpeg
 ```
 
 And `test_media_process/photo.jpg` alongside it. When the SUT calls the media
@@ -501,6 +494,30 @@ The first Gemini call matches `intent_request.json` and gets `intent_response.js
 The second Gemini call matches `conv_request.json` and gets `conv_response.json`.
 Each expectation is fulfilled independently.
 
+### Example: MaxCalls (variable repeat expectations)
+
+When the SUT makes a variable number of calls to the same API -- LLM
+tool-calling loops, retry patterns, pagination -- use `MaxCalls:` to allow an
+expectation to match up to N times:
+
+```text
+Perform -> POST /webhook -> Payload: incoming.json
+
+Expect -> gemini -> Request: tool_call.json -> MaxCalls: "5"
+Expect -> gemini -> Request: final_call.json -> Respond: final_response.json
+Expect -> whatsapp
+```
+
+Semantics: **greedy with lookahead**. The engine consumes up to N matches for
+the current expectation, but moves on early if an incoming request matches the
+*next* expectation instead. In the example above, if the SUT makes 3 tool calls
+then sends the final call, Dojo fulfills the first expectation at 3 (not 5) and
+advances to the second.
+
+`MaxCalls:` cannot be combined with `Respond:`. It is designed for `live` APIs
+where Dojo proxies to the real upstream -- not for mocked APIs where Dojo
+provides canned responses.
+
 ### Example: AI evaluation
 
 ```text
@@ -509,7 +526,7 @@ Perform -> POST /webhook -> Payload: incoming.json
 Expect -> gemini -> Request: gemini_request.json -> Evaluate Response
 ```
 
-Requires `evaluator` in `dojo.config` and an `eval.md` file in the test (or
+Requires `evaluator` in `dojo.yaml` and an `eval.md` file in the test (or
 suite) directory containing grading rules in Markdown.
 
 ### Postgres wire protocol verification
@@ -590,8 +607,8 @@ Run: `go run cmd/dojo/main.go ./example/tests/blackbox`
 
 | Scope | Use for | Location |
 |-------|---------|----------|
-| Suite level | Shared config (deep-merge bases, shared seeds, default API configs) | `my_suite/<file>`, `my_suite/apis/`, `my_suite/seed/` |
-| Test level | Per-test diffs, test-specific payloads, binary fixtures | `test_foo/<file>`, `test_foo/apis/`, `test_foo/seed/` |
+| Suite level | Shared config (deep-merge bases, shared seeds, default API configs) | `my_suite/<file>`, `my_suite/dojo.yaml`, `my_suite/seed/` |
+| Test level | Per-test diffs, test-specific payloads, binary fixtures | `test_foo/<file>`, `test_foo/dojo.yaml`, `test_foo/seed/` |
 
 **Rule of thumb:** if a fixture is used by only one test, it belongs in the test
 directory. Binary files (images, audio, etc.) always belong at the test level
@@ -683,6 +700,15 @@ with the same body but different headers are considered distinct. If two
 different subset fixtures both match the same actual request at runtime, Dojo
 reports an ambiguous match error.
 
+### Ordered expectations and concurrency
+
+Multiple `Expect -> sameAPI` lines within a single test are matched in
+declaration order. The engine serializes mock correlation (`ProcessRequest` /
+`ProcessResponse`) so parallel SUT goroutines cannot double-fulfill the same
+expectation index. Prefer **specific** request fixtures for HTTP subset
+match -- tiny fixtures (e.g. only `generationConfig`) can match unrelated
+outbound calls and make suites flaky when the SUT runs background work.
+
 ## Best Practices: Fixtures and Concurrency
 
 ### Minimize Useless JSONs
@@ -773,13 +799,25 @@ go run cmd/dojo/main.go --format json -o results/ ./path/to/my_suite
 | `--trace` | none | Trace log HTTP and Postgres request/response payloads (truncated) correlated by test id. |
 
 Dojo will:
-1. Read `dojo.config` and set proxy env vars.
+1. Read `dojo.yaml` and set proxy env vars.
 2. Boot the SUT as a child process; wait for its HTTP listener if configured.
 3. If **`startup.plan`** exists at the suite root, satisfy those `Expect` lines before any test runs (failure aborts the whole suite).
 4. Run all tests concurrently (up to `concurrency`).
 5. Print the verdict and exit 0 (all pass) or 1 (any failure).
 
 After changing engine, workspace, proxies, or example SUT/fixtures, also run **`go test ./...`** from the Dojo module root.
+
+### Tracing & LLM Usage
+
+Pass `--trace` to log all HTTP and Postgres traffic (truncated, correlated by
+test ID) to stderr via `slog`. This does not affect `--format` output.
+
+Dojo automatically parses token usage from live Gemini (`usageMetadata`) and
+OpenAI (`usage`) responses. Counts are aggregated per-API and per-test. In
+console output, total tokens appear after each test result
+(`PASS test_foo (1.2s) [3847 tokens]`). In JSON output, see the `llm_usage`
+field on each test result. No configuration needed -- if no live LLM responses
+are observed, the field is omitted.
 
 ## Checklist: Adding a New Test
 
@@ -789,11 +827,11 @@ After changing engine, workspace, proxies, or example SUT/fixtures, also run **`
 4. For each `Expect -> <api>`:
    - Create the `Request:` fixture (`.json` or `.sql`).
    - If mock: create `Respond:` fixture or rely on `default_response`.
-5. If the SUT calls a mock API that needs a test-specific response (especially binary files): create `test_<name>/apis/<api>.json` with a `file` and `content_type` override. Place the binary file in the test directory.
+5. If the SUT calls a mock API that needs a test-specific response (especially binary files): create `test_<name>/dojo.yaml` with a `file` and `content_type` override. Place the binary file in the test directory.
 6. If using deep merge: only put the per-test diff in `test_<name>/`, keep the shared base at suite level.
 7. If the test needs seed data: create `test_<name>/seed/seed.sql`.
-8. If the test needs a different API config: create `test_<name>/apis/<api>.json` with only the overridden fields.
-9. If the test needs different entrypoint headers (e.g., HMAC signatures, API keys): create `test_<name>/entrypoints/<name>.json` with only the overridden fields.
+8. If the test needs a different API config: create `test_<name>/dojo.yaml` with only the overridden fields.
+9. If the test needs different entrypoint headers (e.g., HMAC signatures, API keys): create `test_<name>/dojo.yaml` with only the overridden fields.
 10. Run: `go run cmd/dojo/main.go ./path/to/suite` and confirm the test passes.
 
 For deeper details, see [readme.md](readme.md).
