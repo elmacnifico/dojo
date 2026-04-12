@@ -104,7 +104,7 @@ func TestAwaitPhaseExpectations_Timeout(t *testing.T) {
 
 
 
-func TestReadFixture(t *testing.T) {
+func TestReadPlanFixture(t *testing.T) {
 	tmpDir := t.TempDir()
 	testDir := filepath.Join(tmpDir, "test_foo")
 	suiteDir := filepath.Join(tmpDir, "suite_bar")
@@ -116,7 +116,7 @@ func TestReadFixture(t *testing.T) {
 	suiteFile := filepath.Join(suiteDir, "query.sql")
 	os.WriteFile(suiteFile, []byte("SELECT * FROM users"), 0644)
 	
-	b, err := readFixture(testDir, suiteDir, "query.sql")
+	b, err := workspace.ReadPlanFixture(testDir, suiteDir, "query.sql")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -128,7 +128,7 @@ func TestReadFixture(t *testing.T) {
 	testFile := filepath.Join(testDir, "query.sql")
 	os.WriteFile(testFile, []byte("SELECT 1"), 0644)
 	
-	b, err = readFixture(testDir, suiteDir, "query.sql")
+	b, err = workspace.ReadPlanFixture(testDir, suiteDir, "query.sql")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -137,7 +137,7 @@ func TestReadFixture(t *testing.T) {
 	}
 
 	// Test missing file
-	_, err = readFixture(testDir, suiteDir, "missing.sql")
+	_, err = workspace.ReadPlanFixture(testDir, suiteDir, "missing.sql")
 	if err == nil {
 		t.Fatal("expected error for missing file, got nil")
 	}

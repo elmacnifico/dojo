@@ -358,6 +358,10 @@ func loadSuite(ws *Workspace, suitePath, suiteName string) (*Suite, error) {
 		}
 	}
 
+	if len(suite.Tests) == 0 {
+		return nil, fmt.Errorf("suite %s: no tests found; add directories named test_* with a .plan file", suiteName)
+	}
+
 	if suite.Config.Concurrency > 1 {
 		if err := ValidateUniqueExpectedRequests(suite); err != nil {
 			return nil, fmt.Errorf("suite %s: %w", suiteName, err)

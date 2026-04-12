@@ -124,12 +124,12 @@ func TestSplitPhases_SinglePhase(t *testing.T) {
 		{Action: "Expect", Target: "gemini"},
 		{Action: "Expect", Target: "postgres"},
 	}
-	phases := splitPhases(lines)
+	phases := workspace.SplitPlanPhases(lines)
 	if len(phases) != 1 {
 		t.Fatalf("expected 1 phase, got %d", len(phases))
 	}
-	if len(phases[0].expects) != 2 {
-		t.Fatalf("expected 2 expects in phase 0, got %d", len(phases[0].expects))
+	if len(phases[0].Expects) != 2 {
+		t.Fatalf("expected 2 expects in phase 0, got %d", len(phases[0].Expects))
 	}
 }
 
@@ -141,18 +141,18 @@ func TestSplitPhases_TwoPhases(t *testing.T) {
 		{Action: "Expect", Target: "postgres"},
 		{Action: "Perform", Target: "postgres"},
 	}
-	phases := splitPhases(lines)
+	phases := workspace.SplitPlanPhases(lines)
 	if len(phases) != 2 {
 		t.Fatalf("expected 2 phases, got %d", len(phases))
 	}
-	if len(phases[0].expects) != 2 {
-		t.Fatalf("expected 2 expects in phase 0, got %d", len(phases[0].expects))
+	if len(phases[0].Expects) != 2 {
+		t.Fatalf("expected 2 expects in phase 0, got %d", len(phases[0].Expects))
 	}
-	if len(phases[1].expects) != 0 {
-		t.Fatalf("expected 0 expects in phase 1, got %d", len(phases[1].expects))
+	if len(phases[1].Expects) != 0 {
+		t.Fatalf("expected 0 expects in phase 1, got %d", len(phases[1].Expects))
 	}
-	if phases[1].perform.Target != "postgres" {
-		t.Fatalf("expected phase 1 target = postgres, got %q", phases[1].perform.Target)
+	if phases[1].Perform.Target != "postgres" {
+		t.Fatalf("expected phase 1 target = postgres, got %q", phases[1].Perform.Target)
 	}
 }
 

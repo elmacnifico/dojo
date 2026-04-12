@@ -31,30 +31,6 @@ type MismatchError struct {
 
 func (e *MismatchError) Error() string { return e.Reason }
 
-// planPhase groups a Perform line with the Expect lines that follow it.
-type planPhase struct {
-	perform workspace.ParsedLine
-	expects []workspace.ParsedLine
-}
-
-// splitPhases divides plan lines into phases, each starting with a Perform.
-func splitPhases(lines []workspace.ParsedLine) []planPhase {
-	var phases []planPhase
-	cur := -1
-	for _, l := range lines {
-		switch strings.ToLower(l.Action) {
-		case "perform":
-			phases = append(phases, planPhase{perform: l})
-			cur++
-		case "expect":
-			if cur >= 0 {
-				phases[cur].expects = append(phases[cur].expects, l)
-			}
-		}
-	}
-	return phases
-}
-
 func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Test, suite *workspace.Suite, suiteName string) (workspace.LLMUsage, error) {
 	var usage workspace.LLMUsage
 	livePostgres := false
@@ -83,7 +59,7 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 		return usage, fmt.Errorf("plan must start with a Perform action")
 	}
 
-	phases := splitPhases(doc.Lines)
+	phases := workspace.SplitPlanPhases(doc.Lines)
 	if len(phases) == 0 {
 		return usage, fmt.Errorf("plan must start with a Perform action")
 	}
@@ -115,105 +91,13 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 	return active.TotalUsage, nil
 }
 
-func (e *Engine) prepareEntrypoint(ctx context.Context, id string, test *workspace.Test, suite *workspace.Suite, suiteName string, phase planPhase) (*ActiveTest, workspace.EntrypointConfig, []byte, int, error) {
-	performLine := phase.perform
-	target := performLine.Target
-	
-	var ep workspace.EntrypointConfig
-	
-	// Check if it's an inline HTTP trigger (e.g., "POST /users")
-	parts := strings.SplitN(target, " ", 2)
-	isHTTPMethod := false
-	if len(parts) == 2 {
-		method := strings.ToUpper(parts[0])
-		switch method {
-		case "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS":
-			isHTTPMethod = true
-			ep = workspace.EntrypointConfig{
-				Type:   "http",
-				Method: method,
-				Path:   parts[1],
-			}
-		}
-	}
-	
-	if !isHTTPMethod {
-		epName := strings.TrimPrefix(target, "entrypoints/")
-		var ok bool
-		ep, ok = suite.Entrypoints[epName]
-		if !ok {
-			return nil, ep, nil, 0, fmt.Errorf("entrypoint '%s' not found", epName)
-		}
-		if testEP, ok := test.Entrypoints[epName]; ok {
-			ep = testEP
-		}
-	}
+func (e *Engine) prepareEntrypoint(ctx context.Context, id string, test *workspace.Test, suite *workspace.Suite, suiteName string, phase workspace.PlanPhase) (*ActiveTest, workspace.EntrypointConfig, []byte, int, error) {
+	testDir := filepath.Join(e.Workspace.BaseDir, suiteName, id)
+	suiteDir := filepath.Join(e.Workspace.BaseDir, suiteName)
 
-	var payload []byte
-	var expectStatus int
-	var withJSON []byte
-	var hasPayloadClause bool
-
-	for _, clause := range performLine.Clauses {
-		switch strings.ToLower(clause.Key) {
-		case "payload":
-			hasPayloadClause = true
-			if clause.Value != nil {
-				if filepath.Ext(*clause.Value) != "" {
-					b, err := workspace.ResolveFile(*clause.Value, filepath.Join(e.Workspace.BaseDir, suiteName, id), filepath.Join(e.Workspace.BaseDir, suiteName))
-					if err != nil {
-						return nil, ep, nil, 0, fmt.Errorf("failed to read payload %s: %w", *clause.Value, err)
-					}
-					payload = b
-				} else {
-					payload = []byte(*clause.Value)
-				}
-			}
-		case "with":
-			if clause.Value != nil {
-				withJSON = []byte(*clause.Value)
-			}
-		case "status", "expectstatus":
-			if clause.Value != nil {
-				n, err := strconv.Atoi(*clause.Value)
-				if err != nil {
-					return nil, ep, nil, 0, fmt.Errorf("invalid Status value %q: must be an integer", *clause.Value)
-				}
-				expectStatus = n
-			}
-		case "header":
-			if clause.Value != nil {
-				if ep.Headers == nil {
-					ep.Headers = make(map[string]string)
-				}
-				parts := strings.SplitN(*clause.Value, ":", 2)
-				if len(parts) == 2 {
-					ep.Headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
-				}
-			}
-		}
-	}
-
-	if !hasPayloadClause && !isHTTPMethod {
-		epName := strings.TrimPrefix(target, "entrypoints/")
-		implicitFile := epName + ".json"
-		b, err := workspace.ResolveFile(implicitFile, filepath.Join(e.Workspace.BaseDir, suiteName, id), filepath.Join(e.Workspace.BaseDir, suiteName))
-		if err == nil {
-			payload = b
-		} else if len(withJSON) > 0 {
-			return nil, ep, nil, 0, fmt.Errorf("With: clause requires a base payload, but %s was not found", implicitFile)
-		}
-	}
-
-	if len(withJSON) > 0 {
-		if len(payload) == 0 {
-			return nil, ep, nil, 0, fmt.Errorf("With: clause requires a base payload")
-		}
-		merged, err := workspace.DeepMergeJSON(payload, withJSON)
-		if err != nil {
-			return nil, ep, nil, 0, fmt.Errorf("failed to merge With: JSON: %w", err)
-		}
-		payload = merged
+	ep, payload, expectStatus, err := workspace.ResolveHTTPPerform(phase.Perform, test, suite, testDir, suiteDir)
+	if err != nil {
+		return nil, ep, nil, 0, err
 	}
 
 	active := &ActiveTest{
@@ -235,7 +119,7 @@ func (e *Engine) prepareEntrypoint(ctx context.Context, id string, test *workspa
 	}
 
 	expIdx := make(map[string]int)
-	for _, l := range phase.expects {
+	for _, l := range phase.Expects {
 		apiName := l.Target
 		if idx := strings.IndexByte(apiName, '/'); idx >= 0 {
 			apiName = apiName[:idx]
@@ -480,11 +364,11 @@ func (e *Engine) awaitPhaseExpectations(ctx context.Context, active *ActiveTest)
 	return nil
 }
 
-func (e *Engine) executeSubsequentPhases(ctx context.Context, active *ActiveTest, id, suiteName string, phases []planPhase, livePGURL string) error {
+func (e *Engine) executeSubsequentPhases(ctx context.Context, active *ActiveTest, id, suiteName string, phases []workspace.PlanPhase, livePGURL string) error {
 	testDir := filepath.Join(e.Workspace.BaseDir, suiteName, id)
 	suiteDir := filepath.Join(e.Workspace.BaseDir, suiteName)
 	for _, ph := range phases {
-		if err := e.executePostgresPerform(ctx, active, ph.perform, testDir, suiteDir, livePGURL); err != nil {
+		if err := e.executePostgresPerform(ctx, active, ph.Perform, testDir, suiteDir, livePGURL); err != nil {
 			return err
 		}
 	}
@@ -523,7 +407,7 @@ func (e *Engine) executePostgresPerform(ctx context.Context, active *ActiveTest,
 		return fmt.Errorf("Perform -> postgres requires a Query clause")
 	}
 
-	querySQL, err := readFixture(testDir, suiteDir, queryFile)
+	querySQL, err := workspace.ReadPlanFixture(testDir, suiteDir, queryFile)
 	if err != nil {
 		return fmt.Errorf("failed to read query fixture %s: %w", queryFile, err)
 	}
@@ -557,7 +441,7 @@ func (e *Engine) executePostgresPerform(ctx context.Context, active *ActiveTest,
 
 	if filepath.Ext(expectValue) != "" {
 		actual := rowsToJSON(rows)
-		expected, err := readFixture(testDir, suiteDir, expectValue)
+		expected, err := workspace.ReadPlanFixture(testDir, suiteDir, expectValue)
 		if err != nil {
 			return fmt.Errorf("failed to read expect fixture %s: %w", expectValue, err)
 		}
@@ -589,20 +473,6 @@ func (e *Engine) executePostgresPerform(ctx context.Context, active *ActiveTest,
 		}
 	}
 	return nil
-}
-
-// readFixture reads a file, trying testDir first then falling back to suiteDir.
-func readFixture(testDir, suiteDir, filename string) ([]byte, error) {
-	p := filepath.Join(testDir, filename)
-	b, err := os.ReadFile(p)
-	if err != nil {
-		p = filepath.Join(suiteDir, filename)
-		b, err = os.ReadFile(p)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return b, nil
 }
 
 // rowsToJSON serializes SQL result rows as a JSON array of string-valued objects.

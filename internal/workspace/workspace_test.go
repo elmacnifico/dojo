@@ -138,6 +138,27 @@ apis:
 	}
 }
 
+func TestLoadWorkspace_ErrWhenSuiteHasNoTests(t *testing.T) {
+	tmpDir := t.TempDir()
+	testutil.CreateFile(t, tmpDir, "empty_suite/dojo.yaml", `
+concurrency: 1
+apis:
+  x:
+    mode: mock
+entrypoints:
+  w:
+    type: http
+    path: /
+`)
+	_, err := workspace.LoadWorkspace(tmpDir)
+	if err == nil {
+		t.Fatal("expected error when suite has no test_* directories")
+	}
+	if !strings.Contains(err.Error(), "no tests found") {
+		t.Fatalf("expected 'no tests found' in error, got: %v", err)
+	}
+}
+
 func TestLoadWorkspace_PlanDrivenFixtures(t *testing.T) {
 	tmpDir := t.TempDir()
 

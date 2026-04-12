@@ -120,6 +120,12 @@ func main() {
 		return
 	}
 
+	if err := workspace.PreflightLoadedSuite(ws, suiteName); err != nil {
+		fmt.Fprintf(os.Stderr, "Preflight failed: %v\n", err)
+		exitCode = 1
+		return
+	}
+
 	if format == "console" {
 		fmt.Printf("Loaded Suite '%s' successfully.\n", suiteName)
 		fmt.Printf("  Tests:       %d\n", len(suite.Tests))
