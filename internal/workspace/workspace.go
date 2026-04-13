@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -617,9 +618,13 @@ func WireFixturesFromPlan(doc *ParsedDocument, test *Test, suite *Suite, testPat
 				}
 				spec.Response = &DefaultResponse{File: *clause.Value, Code: code}
 			case "maxcalls":
-				var max int
-				if _, err := fmt.Sscanf(*clause.Value, "%d", &max); err != nil {
+				v := strings.TrimSpace(*clause.Value)
+				max, err := strconv.Atoi(v)
+				if err != nil {
 					return fmt.Errorf("API %q MaxCalls must be an integer, got %q", apiName, *clause.Value)
+				}
+				if max < 1 {
+					return fmt.Errorf("API %q MaxCalls must be at least 1, got %d", apiName, max)
 				}
 				spec.MaxCalls = max
 			}

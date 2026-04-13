@@ -84,10 +84,54 @@ func headersMatch(actual map[string][]string, expectedJSON []byte) bool {
 	return workspace.JSONSubsetMatch(actualJSON, expectedJSON)
 }
 
+// expectationSpecMatches reports whether an intercepted request satisfies the
+// given ordered expectation (body subset, optional headers, optional path).
+func expectationSpecMatches(cfg workspace.APIConfig, spec workspace.ExpectationSpec, reqPayload []byte, reqHeaders map[string][]string, reqURL string, vars map[string]any) bool {
+	bodyMatch := spec.ExpectedRequest == nil || len(spec.ExpectedRequest.Payload) == 0 ||
+		payloadsMatch(cfg, reqPayload, spec.ExpectedRequest.Payload, vars)
+	if !bodyMatch {
+		return false
+	}
+	if spec.ExpectedHeaders != nil && len(spec.ExpectedHeaders.Payload) > 0 {
+		if reqHeaders == nil || !headersMatch(reqHeaders, spec.ExpectedHeaders.Payload) {
+			return false
+		}
+	}
+	if spec.Path != "" && spec.Path != reqURL {
+		return false
+	}
+	return true
+}
+
+// maxCallsLookaheadAllowed is true when the expectation at idx may still accept
+// more identical matches, so a request that also matches the next spec should
+// advance (greedy MaxCalls semantics). When MaxCalls is 0 or 1 and no match
+// has been counted yet, we do not lookahead so duplicate ordered expectations
+// with the same fixture still consume slots one at a time.
+func maxCallsLookaheadAllowed(exp *Expectation) bool {
+	return exp.MaxCalls > 1 || exp.MatchCount > 0
+}
+
+// orderedExpectRequestPayloadEqual returns true when two ordered expectation
+// specs use the same expected request bytes (after trim). When equal, we do
+// not apply MaxCalls lookahead so multiple Expect lines with the same Request
+// fixture still match one outbound call per slot.
+func orderedExpectRequestPayloadEqual(a, b workspace.ExpectationSpec) bool {
+	var ap, bp []byte
+	if a.ExpectedRequest != nil {
+		ap = bytes.TrimSpace(a.ExpectedRequest.Payload)
+	}
+	if b.ExpectedRequest != nil {
+		bp = bytes.TrimSpace(b.ExpectedRequest.Payload)
+	}
+	return bytes.Equal(ap, bp)
+}
+
 // ProcessRequest correlates the intercepted request to an active test by
 // comparing actual and expected request payloads using subset matching. For
 // APIs with ordered expectations, the first unfulfilled expectation whose
-// payload matches is used. reqHeaders carries HTTP headers (nil for non-HTTP).
+// payload matches is used, with MaxCalls lookahead when a repeat slot also
+// matches the next ordered spec. reqHeaders carries HTTP headers (nil for non-HTTP).
 func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte, reqHeaders map[string][]string, reqURL string) dojo.MatchResult {
 	e.processRequestMu.Lock()
 	defer e.processRequestMu.Unlock()
@@ -127,24 +171,29 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte, req
 				if i >= len(exps) || exps[i].Fulfilled {
 					continue
 				}
-				bodyMatch := spec.ExpectedRequest == nil || len(spec.ExpectedRequest.Payload) == 0 ||
-					payloadsMatch(eff, reqPayload, spec.ExpectedRequest.Payload, at.Variables)
-				if !bodyMatch {
+				if !expectationSpecMatches(eff, spec, reqPayload, reqHeaders, reqURL, at.Variables) {
 					continue
 				}
-			if spec.ExpectedHeaders != nil && len(spec.ExpectedHeaders.Payload) > 0 {
-				if reqHeaders == nil || !headersMatch(reqHeaders, spec.ExpectedHeaders.Payload) {
-					continue
+				j := i
+				for j+1 < len(eff.OrderedExpectations) && j+1 < len(exps) && !exps[j+1].Fulfilled {
+					nextSpec := eff.OrderedExpectations[j+1]
+					if !expectationSpecMatches(eff, nextSpec, reqPayload, reqHeaders, reqURL, at.Variables) {
+						break
+					}
+					if !maxCallsLookaheadAllowed(exps[j]) {
+						break
+					}
+					if orderedExpectRequestPayloadEqual(eff.OrderedExpectations[j], eff.OrderedExpectations[j+1]) {
+						break
+					}
+					at.ForceFulfillEarly(apiName, j)
+					j++
 				}
+				hits = append(hits, matchHit{test: at, idx: j})
+				return true
 			}
-			if spec.Path != "" && spec.Path != reqURL {
-				continue
-			}
-			hits = append(hits, matchHit{test: at, idx: i})
 			return true
 		}
-		return true
-	}
 
 		// Fallback: single ExpectedRequest (backward compat).
 		if exps[0].Fulfilled {

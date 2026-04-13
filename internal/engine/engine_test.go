@@ -529,6 +529,233 @@ func TestProcessRequest_OrderedMultiExpectations(t *testing.T) {
 	}
 }
 
+// When a repeat slot has MaxCalls>1 and the same request also matches the next ordered
+// spec, the engine force-fulfills the repeat slot and attributes the request to the next slot.
+func TestProcessRequest_MaxCallsLookaheadWhenNextAlsoMatches(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"gemini": {Mode: "mock", URL: "/v1/generate",
+				OrderedExpectations: []workspace.ExpectationSpec{
+					{
+						ExpectedRequest: &workspace.PayloadSpec{Payload: []byte(`{"tool":"query"}`)},
+						Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"slot":0}`)},
+					},
+					{
+						ExpectedRequest: &workspace.PayloadSpec{Payload: []byte(`{"tool":"query","done":true}`)},
+						Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"slot":1}`)},
+					},
+				},
+			},
+		},
+	}
+	active := &engine.ActiveTest{
+		ID:    "t_lookahead",
+		Suite: suite,
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Expectations: map[string][]*engine.Expectation{
+			"gemini": {
+				{Target: "gemini", Index: 0, MaxCalls: 5},
+				{Target: "gemini", Index: 1},
+			},
+		},
+	}
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("t_lookahead", active)
+
+	payload := []byte(`{"tool":"query","done":true,"extra":"ignored"}`)
+	m := eng.ProcessRequest("http", "gemini", payload, nil, "")
+	if m.Err != nil {
+		t.Fatalf("unexpected error: %v", m.Err)
+	}
+	if string(m.MockResponse) != `{"slot":1}` {
+		t.Fatalf("mock response: got %q", string(m.MockResponse))
+	}
+	if !active.Expectations["gemini"][0].Fulfilled {
+		t.Fatal("expectation 0 should be force-fulfilled via lookahead")
+	}
+	if active.Expectations["gemini"][0].MatchCount != 0 {
+		t.Fatalf("expectation 0 MatchCount = %d, want 0 (no normal fulfill)", active.Expectations["gemini"][0].MatchCount)
+	}
+	if !active.Expectations["gemini"][1].Fulfilled {
+		t.Fatal("expectation 1 should be fulfilled")
+	}
+}
+
+// After one tool-round hit, a final-shaped request that matches both specs should still
+// lookahead from the repeat slot to the final slot.
+func TestProcessRequest_MaxCallsLookaheadAfterPartialToolRounds(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"gemini": {Mode: "mock", URL: "/v1/generate",
+				OrderedExpectations: []workspace.ExpectationSpec{
+					{
+						ExpectedRequest: &workspace.PayloadSpec{Payload: []byte(`{"tool":"query"}`)},
+						Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"slot":0}`)},
+					},
+					{
+						ExpectedRequest: &workspace.PayloadSpec{Payload: []byte(`{"tool":"query","done":true}`)},
+						Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"slot":1}`)},
+					},
+				},
+			},
+		},
+	}
+	active := &engine.ActiveTest{
+		ID:    "t_partial",
+		Suite: suite,
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Expectations: map[string][]*engine.Expectation{
+			"gemini": {
+				{Target: "gemini", Index: 0, MaxCalls: 5},
+				{Target: "gemini", Index: 1},
+			},
+		},
+	}
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("t_partial", active)
+
+	m1 := eng.ProcessRequest("http", "gemini", []byte(`{"tool":"query"}`), nil, "")
+	if m1.Err != nil {
+		t.Fatalf("first call: %v", m1.Err)
+	}
+	if active.Expectations["gemini"][0].MatchCount != 1 || active.Expectations["gemini"][0].Fulfilled {
+		t.Fatalf("after first call: count=%d fulfilled=%v", active.Expectations["gemini"][0].MatchCount, active.Expectations["gemini"][0].Fulfilled)
+	}
+
+	m2 := eng.ProcessRequest("http", "gemini", []byte(`{"tool":"query","done":true}`), nil, "")
+	if m2.Err != nil {
+		t.Fatalf("second call: %v", m2.Err)
+	}
+	if string(m2.MockResponse) != `{"slot":1}` {
+		t.Fatalf("second response: got %q", string(m2.MockResponse))
+	}
+	if !active.Expectations["gemini"][0].Fulfilled || active.Expectations["gemini"][0].MatchCount != 1 {
+		t.Fatalf("expectation 0: fulfilled=%v count=%d", active.Expectations["gemini"][0].Fulfilled, active.Expectations["gemini"][0].MatchCount)
+	}
+	if !active.Expectations["gemini"][1].Fulfilled {
+		t.Fatal("expectation 1 should be fulfilled")
+	}
+}
+
+// Chained lookahead: several strictening fixtures in a row; one request matching all
+// should force-fulfill each repeat slot until the last spec is selected.
+func TestProcessRequest_MaxCallsLookaheadChain(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"gemini": {Mode: "mock", URL: "/v1/generate",
+				OrderedExpectations: []workspace.ExpectationSpec{
+					{
+						ExpectedRequest: &workspace.PayloadSpec{Payload: []byte(`{"a":1}`)},
+						Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"r":0}`)},
+					},
+					{
+						ExpectedRequest: &workspace.PayloadSpec{Payload: []byte(`{"a":1,"b":2}`)},
+						Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"r":1}`)},
+					},
+					{
+						ExpectedRequest: &workspace.PayloadSpec{Payload: []byte(`{"a":1,"b":2,"c":3}`)},
+						Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"r":2}`)},
+					},
+				},
+			},
+		},
+	}
+	active := &engine.ActiveTest{
+		ID:    "t_chain",
+		Suite: suite,
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Expectations: map[string][]*engine.Expectation{
+			"gemini": {
+				{Target: "gemini", Index: 0, MaxCalls: 5},
+				{Target: "gemini", Index: 1, MaxCalls: 5},
+				{Target: "gemini", Index: 2},
+			},
+		},
+	}
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("t_chain", active)
+
+	payload := []byte(`{"a":1,"b":2,"c":3}`)
+	m := eng.ProcessRequest("http", "gemini", payload, nil, "")
+	if m.Err != nil {
+		t.Fatalf("unexpected error: %v", m.Err)
+	}
+	if string(m.MockResponse) != `{"r":2}` {
+		t.Fatalf("response: got %q", string(m.MockResponse))
+	}
+	for i := 0; i < 2; i++ {
+		if !active.Expectations["gemini"][i].Fulfilled {
+			t.Fatalf("expectation %d should be force-fulfilled", i)
+		}
+	}
+	if !active.Expectations["gemini"][2].Fulfilled {
+		t.Fatal("expectation 2 should be fulfilled")
+	}
+}
+
+// Identical request fixtures on consecutive lines must not use MaxCalls lookahead:
+// each outbound call consumes the current slot until MaxCalls, then the next slot.
+func TestProcessRequest_MaxCalls_IdenticalFixturesNoLookahead(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"dup":true}`)
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"gemini": {Mode: "mock", URL: "/v1/generate",
+				OrderedExpectations: []workspace.ExpectationSpec{
+					{
+						ExpectedRequest: &workspace.PayloadSpec{Payload: body},
+						Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"slot":1}`)},
+					},
+					{
+						ExpectedRequest: &workspace.PayloadSpec{Payload: body},
+						Response:        &workspace.DefaultResponse{Code: 200, Payload: []byte(`{"slot":2}`)},
+					},
+				},
+			},
+		},
+	}
+	active := &engine.ActiveTest{
+		ID:    "t_ident",
+		Suite: suite,
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Expectations: map[string][]*engine.Expectation{
+			"gemini": {
+				{Target: "gemini", Index: 0, MaxCalls: 3},
+				{Target: "gemini", Index: 1},
+			},
+		},
+	}
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("t_ident", active)
+
+	for range 3 {
+		m := eng.ProcessRequest("http", "gemini", body, nil, "")
+		if m.Err != nil {
+			t.Fatalf("unexpected: %v", m.Err)
+		}
+	}
+	if !active.Expectations["gemini"][0].Fulfilled || active.Expectations["gemini"][0].MatchCount != 3 {
+		t.Fatalf("exp0: fulfilled=%v count=%d", active.Expectations["gemini"][0].Fulfilled, active.Expectations["gemini"][0].MatchCount)
+	}
+	if active.Expectations["gemini"][1].Fulfilled {
+		t.Fatal("exp1 should not be fulfilled yet")
+	}
+	m := eng.ProcessRequest("http", "gemini", body, nil, "")
+	if m.Err != nil {
+		t.Fatalf("fourth call: %v", m.Err)
+	}
+	if !active.Expectations["gemini"][1].Fulfilled {
+		t.Fatal("exp1 should be fulfilled after fourth call")
+	}
+}
+
 // Two ordered expectations may share the same subset-matching request body; concurrent
 // outbound calls must still fulfill exactly one slot each (engine serializes ProcessRequest).
 func TestProcessRequest_ConcurrentSamePayloadOrderedExpects(t *testing.T) {

@@ -34,36 +34,9 @@ type ActiveTest struct {
 	done         chan struct{}
 }
 
-// MarkFulfilled marks the expectation at the given index for an API as completed.
-// If the expectation is already fulfilled (by a prior match or timeout), the call
-// is a no-op to prevent races between match handlers and timeout goroutines.
-func (a *ActiveTest) MarkFulfilled(apiName string, idx int, err error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	exps := a.Expectations[apiName]
-	if idx < 0 || idx >= len(exps) {
-		return
-	}
-	exp := exps[idx]
-	if exp.Fulfilled {
-		return
-	}
-	
-	exp.MatchCount++
-	
-	targetCalls := exp.MaxCalls
-	if targetCalls <= 0 {
-		targetCalls = 1
-	}
-
-	if exp.MatchCount >= targetCalls {
-		exp.Fulfilled = true
-	}
-	if err != nil {
-		exp.Error = err
-		exp.Fulfilled = true // error always fulfills
-	}
-
+// closeDoneIfAllFulfilledLocked closes the done channel when every expectation is
+// fulfilled. The caller must hold a.mu.
+func (a *ActiveTest) closeDoneIfAllFulfilledLocked() {
 	allDone := true
 	for _, slice := range a.Expectations {
 		for _, e := range slice {
@@ -83,6 +56,57 @@ func (a *ActiveTest) MarkFulfilled(apiName string, idx int, err error) {
 			close(a.done)
 		}
 	}
+}
+
+// ForceFulfillEarly marks the expectation fulfilled without incrementing
+// MatchCount. Used when MaxCalls lookahead advances to a later ordered expectation
+// because the same request also matches the next spec.
+func (a *ActiveTest) ForceFulfillEarly(apiName string, idx int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	exps := a.Expectations[apiName]
+	if idx < 0 || idx >= len(exps) {
+		return
+	}
+	exp := exps[idx]
+	if exp.Fulfilled {
+		return
+	}
+	exp.Fulfilled = true
+	a.closeDoneIfAllFulfilledLocked()
+}
+
+// MarkFulfilled marks the expectation at the given index for an API as completed.
+// If the expectation is already fulfilled (by a prior match or timeout), the call
+// is a no-op to prevent races between match handlers and timeout goroutines.
+func (a *ActiveTest) MarkFulfilled(apiName string, idx int, err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	exps := a.Expectations[apiName]
+	if idx < 0 || idx >= len(exps) {
+		return
+	}
+	exp := exps[idx]
+	if exp.Fulfilled {
+		return
+	}
+
+	exp.MatchCount++
+
+	targetCalls := exp.MaxCalls
+	if targetCalls <= 0 {
+		targetCalls = 1
+	}
+
+	if exp.MatchCount >= targetCalls {
+		exp.Fulfilled = true
+	}
+	if err != nil {
+		exp.Error = err
+		exp.Fulfilled = true // error always fulfills
+	}
+
+	a.closeDoneIfAllFulfilledLocked()
 }
 
 // FirstUnfulfilled returns the first unfulfilled expectation for the given API,

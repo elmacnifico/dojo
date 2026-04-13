@@ -31,6 +31,29 @@ type MismatchError struct {
 
 func (e *MismatchError) Error() string { return e.Reason }
 
+// maxCallsFromExpectLine parses an optional MaxCalls clause from an Expect line.
+// When present, the value must be a positive integer (matching WireFixturesFromPlan).
+func maxCallsFromExpectLine(l workspace.ParsedLine) (max int, found bool, err error) {
+	for _, clause := range l.Clauses {
+		if clause.Value == nil {
+			continue
+		}
+		if strings.ToLower(clause.Key) != "maxcalls" {
+			continue
+		}
+		v := strings.TrimSpace(*clause.Value)
+		m, convErr := strconv.Atoi(v)
+		if convErr != nil {
+			return 0, true, fmt.Errorf("MaxCalls must be an integer, got %q", *clause.Value)
+		}
+		if m < 1 {
+			return 0, true, fmt.Errorf("MaxCalls must be at least 1, got %d", m)
+		}
+		return m, true, nil
+	}
+	return 0, false, nil
+}
+
 func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Test, suite *workspace.Suite, suiteName string) (workspace.LLMUsage, error) {
 	var usage workspace.LLMUsage
 	livePostgres := false
@@ -138,12 +161,13 @@ func (e *Engine) prepareEntrypoint(ctx context.Context, id string, test *workspa
 			if strings.ToLower(clause.Key) == "evaluate response" {
 				exp.RequiresEval = true
 			}
-			if strings.ToLower(clause.Key) == "maxcalls" && clause.Value != nil {
-				var max int
-				if _, err := fmt.Sscanf(*clause.Value, "%d", &max); err == nil {
-					exp.MaxCalls = max
-				}
-			}
+		}
+		mc, mcHas, mcErr := maxCallsFromExpectLine(l)
+		if mcErr != nil {
+			return nil, ep, nil, 0, fmt.Errorf("test %s expect %s: %w", id, l.Target, mcErr)
+		}
+		if mcHas {
+			exp.MaxCalls = mc
 		}
 		active.Expectations[apiName] = append(active.Expectations[apiName], exp)
 		expIdx[apiName] = idx + 1
@@ -227,12 +251,13 @@ func (e *Engine) prepareStartupPlan(ctx context.Context, suite *workspace.Suite,
 			if strings.ToLower(clause.Key) == "evaluate response" {
 				exp.RequiresEval = true
 			}
-			if strings.ToLower(clause.Key) == "maxcalls" && clause.Value != nil {
-				var max int
-				if _, err := fmt.Sscanf(*clause.Value, "%d", &max); err == nil {
-					exp.MaxCalls = max
-				}
-			}
+		}
+		mc, mcHas, mcErr := maxCallsFromExpectLine(l)
+		if mcErr != nil {
+			return nil, fmt.Errorf("startup plan expect %s: %w", l.Target, mcErr)
+		}
+		if mcHas {
+			exp.MaxCalls = mc
 		}
 		active.Expectations[apiName] = append(active.Expectations[apiName], exp)
 		expIdx[apiName] = idx + 1
