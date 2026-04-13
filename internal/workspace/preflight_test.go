@@ -247,3 +247,146 @@ func TestSplitPlanPhases_TwoPhases(t *testing.T) {
 		t.Fatalf("phase 0 expects: %d", len(phases[0].Expects))
 	}
 }
+
+func TestValidateStartupPlanFixtures_RejectNonExpect(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	ws := &Workspace{}
+	suite := &Suite{
+		StartupPlan: "Perform -> POST /nope\n",
+		APIs:        map[string]APIConfig{"g": {Mode: "mock", URL: "/x"}},
+	}
+	if err := ValidateStartupPlanFixtures(ws, suite, tmp); err == nil {
+		t.Fatal("expected error for Perform in startup.plan")
+	}
+}
+
+func TestValidateStartupPlanFixtures_WiresAndEval(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	testutil.CreateFile(t, tmp, "g.json", `{}`)
+	ws := &Workspace{}
+	suite := &Suite{
+		StartupPlan: "Expect -> g -> Request: g.json\n",
+		APIs: map[string]APIConfig{
+			"g": {Mode: "mock", URL: "/x"},
+		},
+	}
+	if err := ValidateStartupPlanFixtures(ws, suite, tmp); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+
+	suite2 := &Suite{
+		StartupPlan: "Expect -> g -> Request: g.json -> Evaluate Response\n",
+		APIs: map[string]APIConfig{
+			"g": {Mode: "mock", URL: "/x"},
+		},
+	}
+	if err := ValidateStartupPlanFixtures(ws, suite2, tmp); err == nil {
+		t.Fatal("expected error when Evaluate Response is set but eval is empty")
+	}
+}
+
+func TestValidateTestPlanStatic_UnknownExpectAPI(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	testutil.CreateFile(t, tmp, "w.json", `{}`)
+	suite := &Suite{
+		APIs: map[string]APIConfig{
+			"g": {Mode: "mock", URL: "/x"},
+		},
+		Entrypoints: map[string]EntrypointConfig{
+			"w": {Type: "http", Path: "/hook"},
+		},
+	}
+	test := &Test{
+		Plan: "Perform -> entrypoints/w\nExpect -> not_defined_api",
+		APIs: map[string]APIConfig{
+			"g": {Mode: "mock", URL: "/x"},
+		},
+	}
+	if err := ValidateTestPlanStatic(suite, test, tmp, tmp); err == nil {
+		t.Fatal("expected error for unknown Expect API")
+	}
+}
+
+func TestValidateTestPlanStatic_EvaluateWithoutEval(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	testutil.CreateFile(t, tmp, "w.json", `{}`)
+	testutil.CreateFile(t, tmp, "g.json", `{}`)
+	suite := &Suite{
+		APIs: map[string]APIConfig{
+			"g": {Mode: "mock", URL: "/x"},
+		},
+		Entrypoints: map[string]EntrypointConfig{
+			"w": {Type: "http", Path: "/hook"},
+		},
+	}
+	test := &Test{
+		Plan: "Perform -> entrypoints/w\nExpect -> g -> Request: g.json -> Evaluate Response",
+		Eval: "",
+		APIs: map[string]APIConfig{
+			"g": {Mode: "mock", URL: "/x"},
+		},
+	}
+	if err := ValidateTestPlanStatic(suite, test, tmp, tmp); err == nil {
+		t.Fatal("expected error when Evaluate Response is set but eval is empty")
+	}
+}
+
+func TestValidateTestPlanStatic_InvalidMaxCallsOnExpect(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	testutil.CreateFile(t, tmp, "w.json", `{}`)
+	suite := &Suite{
+		APIs: map[string]APIConfig{
+			"g": {Mode: "mock", URL: "/x"},
+		},
+		Entrypoints: map[string]EntrypointConfig{
+			"w": {Type: "http", Path: "/hook"},
+		},
+	}
+	test := &Test{
+		Plan: "Perform -> entrypoints/w\nExpect -> g -> MaxCalls: nope",
+		APIs: map[string]APIConfig{
+			"g": {Mode: "mock", URL: "/x"},
+		},
+	}
+	if err := ValidateTestPlanStatic(suite, test, tmp, tmp); err == nil {
+		t.Fatal("expected MaxCalls parse error")
+	}
+}
+
+func TestValidateStartupPlanFixtures_EvaluateOKWithWorkspaceEval(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	testutil.CreateFile(t, tmp, "g.json", `{}`)
+	ws := &Workspace{GlobalEval: "check the payload"}
+	suite := &Suite{
+		StartupPlan: "Expect -> g -> Request: g.json -> Evaluate Response\n",
+		APIs: map[string]APIConfig{
+			"g": {Mode: "mock", URL: "/x"},
+		},
+	}
+	if err := ValidateStartupPlanFixtures(ws, suite, tmp); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+}
+
+func TestValidateStartupPlanFixtures_EvaluateOKWithSuiteEval(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	testutil.CreateFile(t, tmp, "g.json", `{}`)
+	ws := &Workspace{}
+	suite := &Suite{
+		StartupPlan: "Expect -> g -> Request: g.json -> Evaluate Response\n",
+		Eval:        "suite rule",
+		APIs: map[string]APIConfig{
+			"g": {Mode: "mock", URL: "/x"},
+		},
+	}
+	if err := ValidateStartupPlanFixtures(ws, suite, tmp); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+}

@@ -694,7 +694,9 @@ or API keys in headers with identical form-encoded bodies.
 ### Uniqueness constraint
 
 No two tests in a suite may share an identical normalized expected request for
-the same API. Dojo rejects exact duplicates at load time. When envelope
+the same API. Dojo rejects exact duplicates at load time when `concurrency > 1`,
+or when `strict_duplicate_expects: true` is set in suite `dojo.yaml` (useful to
+catch ambiguous fixtures before raising concurrency). When envelope
 fixtures are used, the headers are included in the dedup key — two expectations
 with the same body but different headers are considered distinct. If two
 different subset fixtures both match the same actual request at runtime, Dojo

@@ -179,6 +179,9 @@ type DojoConfig struct {
 	// from the entrypoint URL, or 127.0.0.1:8080 when that URL is empty).
 	SutCommand string           `json:"sut_command,omitempty" yaml:"sut_command,omitempty"`
 	SutBaseURL string           `json:"sut_base_url,omitempty" yaml:"sut_base_url,omitempty"`
+	// StrictDuplicateExpects, when true, runs duplicate expected-request detection
+	// even if concurrency is 1, so ambiguous cross-test fixtures are caught early.
+	StrictDuplicateExpects bool `json:"strict_duplicate_expects,omitempty" yaml:"strict_duplicate_expects,omitempty"`
 	Evaluator  *EvaluatorConfig `json:"evaluator,omitempty" yaml:"evaluator,omitempty"`
 	Timeouts   TimeoutConfig    `json:"timeouts,omitempty" yaml:"timeouts,omitempty"`
 	APIs        map[string]APIConfig        `json:"apis,omitempty" yaml:"apis,omitempty"`
@@ -363,7 +366,7 @@ func loadSuite(ws *Workspace, suitePath, suiteName string) (*Suite, error) {
 		return nil, fmt.Errorf("suite %s: no tests found; add directories named test_* with a .plan file", suiteName)
 	}
 
-	if suite.Config.Concurrency > 1 {
+	if suite.Config.Concurrency > 1 || suite.Config.StrictDuplicateExpects {
 		if err := ValidateUniqueExpectedRequests(suite); err != nil {
 			return nil, fmt.Errorf("suite %s: %w", suiteName, err)
 		}

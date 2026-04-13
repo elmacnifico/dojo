@@ -296,6 +296,43 @@ Expect -> stripe -> Request: stripe_request.json`)
 	}
 }
 
+func TestLoadWorkspace_StrictDuplicateExpectsAtConcurrency1(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+
+	testutil.CreateFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+strict_duplicate_expects: true
+apis:
+  stripe:
+    mode: mock
+    url: "/v1/charge"
+    default_response:
+      code: 200
+      body: "{}"
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+`)
+
+	testutil.CreateFile(t, tmpDir, "suite/test_a/test.plan", `Perform -> entrypoints/webhook
+Expect -> stripe -> Request: stripe_request.json`)
+	testutil.CreateFile(t, tmpDir, "suite/test_a/stripe_request.json", `{"amount":100}`)
+
+	testutil.CreateFile(t, tmpDir, "suite/test_b/test.plan", `Perform -> entrypoints/webhook
+Expect -> stripe -> Request: stripe_request.json`)
+	testutil.CreateFile(t, tmpDir, "suite/test_b/stripe_request.json", `{"amount":100}`)
+
+	_, err := workspace.LoadWorkspace(tmpDir)
+	if err == nil {
+		t.Fatal("expected LoadWorkspace to reject duplicates when strict_duplicate_expects is true")
+	}
+	if !strings.Contains(err.Error(), "duplicate normalized expected request") {
+		t.Fatalf("expected duplicate error, got: %v", err)
+	}
+}
+
 func payloadStr(ps *workspace.PayloadSpec) string {
 	if ps == nil {
 		return "<nil>"

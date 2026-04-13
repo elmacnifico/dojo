@@ -73,6 +73,14 @@ type Engine struct {
 	// Serializes outbound request correlation so two concurrent calls cannot both
 	// match the same ordered expectation index before MarkFulfilled runs.
 	processRequestMu sync.Mutex
+
+	// firstSeedFail records the first per-test seed error in a suite run so
+	// [RunSuite] can cascade failures across all tests.
+	seedFailMu    sync.Mutex
+	firstSeedFail *TestSeedError
+	// perTestSeedMu serializes live Postgres seed execution so concurrent tests
+	// do not apply seed scripts against the same database simultaneously.
+	perTestSeedMu sync.Mutex
 }
 
 // SUTError returns the SUT crash error if the process exited unexpectedly.
@@ -358,6 +366,10 @@ func (e *Engine) RunSuite(ctx context.Context, suiteName string, onResult func(w
 		TotalRuns: len(suite.Tests),
 	}
 
+	e.seedFailMu.Lock()
+	e.firstSeedFail = nil
+	e.seedFailMu.Unlock()
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
@@ -432,6 +444,14 @@ func (e *Engine) RunSuite(ctx context.Context, suiteName string, onResult func(w
 	}
 
 	wg.Wait()
+
+	e.seedFailMu.Lock()
+	firstSeed := e.firstSeedFail
+	e.seedFailMu.Unlock()
+	if firstSeed != nil {
+		reconcileSummaryForSeeding(&summary, firstSeed)
+	}
+
 	summary.DurationMs = time.Since(suiteStart).Milliseconds()
 
 	if v := e.sutOutput.Load(); v != nil {

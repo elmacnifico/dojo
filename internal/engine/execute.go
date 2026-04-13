@@ -31,29 +31,6 @@ type MismatchError struct {
 
 func (e *MismatchError) Error() string { return e.Reason }
 
-// maxCallsFromExpectLine parses an optional MaxCalls clause from an Expect line.
-// When present, the value must be a positive integer (matching WireFixturesFromPlan).
-func maxCallsFromExpectLine(l workspace.ParsedLine) (max int, found bool, err error) {
-	for _, clause := range l.Clauses {
-		if clause.Value == nil {
-			continue
-		}
-		if strings.ToLower(clause.Key) != "maxcalls" {
-			continue
-		}
-		v := strings.TrimSpace(*clause.Value)
-		m, convErr := strconv.Atoi(v)
-		if convErr != nil {
-			return 0, true, fmt.Errorf("MaxCalls must be an integer, got %q", *clause.Value)
-		}
-		if m < 1 {
-			return 0, true, fmt.Errorf("MaxCalls must be at least 1, got %d", m)
-		}
-		return m, true, nil
-	}
-	return 0, false, nil
-}
-
 func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Test, suite *workspace.Suite, suiteName string) (workspace.LLMUsage, error) {
 	var usage workspace.LLMUsage
 	livePostgres := false
@@ -68,8 +45,14 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 	}
 
 	if livePostgres {
-		if err := e.runSeeds(livePGURL, filepath.Join(e.Workspace.BaseDir, suiteName, id, "seed")); err != nil {
-			return usage, fmt.Errorf("test seeding failed: %w", err)
+		seedDir := filepath.Join(e.Workspace.BaseDir, suiteName, id, "seed")
+		e.perTestSeedMu.Lock()
+		seedErr := e.runSeeds(livePGURL, seedDir)
+		e.perTestSeedMu.Unlock()
+		if seedErr != nil {
+			ts := &TestSeedError{TestName: id, Err: seedErr}
+			e.recordFirstSeedFailure(ts)
+			return usage, ts
 		}
 	}
 
@@ -162,7 +145,7 @@ func (e *Engine) prepareEntrypoint(ctx context.Context, id string, test *workspa
 				exp.RequiresEval = true
 			}
 		}
-		mc, mcHas, mcErr := maxCallsFromExpectLine(l)
+		mc, mcHas, mcErr := workspace.ParseMaxCallsFromExpectLine(l)
 		if mcErr != nil {
 			return nil, ep, nil, 0, fmt.Errorf("test %s expect %s: %w", id, l.Target, mcErr)
 		}
@@ -252,7 +235,7 @@ func (e *Engine) prepareStartupPlan(ctx context.Context, suite *workspace.Suite,
 				exp.RequiresEval = true
 			}
 		}
-		mc, mcHas, mcErr := maxCallsFromExpectLine(l)
+		mc, mcHas, mcErr := workspace.ParseMaxCallsFromExpectLine(l)
 		if mcErr != nil {
 			return nil, fmt.Errorf("startup plan expect %s: %w", l.Target, mcErr)
 		}

@@ -285,6 +285,8 @@ Key observations:
 - Fixture files like `gemini_request.json` appear at both suite and test level. The suite copy is the base; the test copy carries only the diff.
 - `test_user_update` has a local `dojo.yaml` -- it overrides the suite config for that single test.
 - `seed/` directories can exist at suite level (shared schema) and test level (test-specific data).
+- If any **per-test** `seed/*.sql` fails against **live** Postgres, Dojo marks **every** test in the suite as failed after the run (tests that already finished with pass are flipped with a `suite aborted because seeding failed…` reason). Per-test seeds run **serially** so concurrent workers do not execute SQL scripts against the same database at the same time.
+- Set `strict_duplicate_expects: true` in suite `dojo.yaml` to enforce the duplicate expected-request check even when `concurrency: 1` (by default that check runs only when `concurrency > 1`).
 
 ---
 
@@ -357,6 +359,8 @@ The startup plan runs **after** the HTTP (and Postgres) proxies are up and **`AP
 6. The `startup` registration is removed; **`RunSuite` begins** -- no folder test runs until step 5 succeeds.
 
 So: **all normal tests run only after the startup plan completes.**
+
+Before `StartProxies`, the CLI **preflight** pass (after `LoadWorkspace`) also validates `startup.plan` the same way the engine wires fixtures, and validates every test plan’s `Expect` lines (known API, `MaxCalls`, and `Evaluate Response` vs configured eval rules).
 
 #### Syntax
 

@@ -63,7 +63,6 @@ func ValidateUniqueExpectedRequests(suite *Suite) error {
 	}
 
 	for k, names := range seen {
-		
 		uniqueNames := make(map[string]bool)
 		for _, n := range names {
 			uniqueNames[n] = true
