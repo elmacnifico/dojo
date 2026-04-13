@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -28,6 +29,7 @@ func main() {
 	verboseFlag := flag.Bool("verbose", false, "Show debug logs and SUT output")
 	vFlag := flag.Bool("v", false, "Shorthand for --verbose")
 	traceFlag := flag.Bool("trace", false, "Trace log HTTP and Postgres request/response payloads")
+	runFilter := flag.String("run", "", "Regular expression; only run tests whose names match")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stdout, "Dojo: The Universal Black-Box Contract Engine\n\n")
@@ -39,6 +41,7 @@ func main() {
 		fmt.Fprintf(os.Stdout, "  dojo run ./example/tests/blackbox\n")
 		fmt.Fprintf(os.Stdout, "  dojo ./example/tests/blackbox\n")
 		fmt.Fprintf(os.Stdout, "  dojo --format json -o results/ ./example/tests/blackbox\n")
+		fmt.Fprintf(os.Stdout, "  dojo -run 'test_foo|test_bar' ./my_suite\n")
 		fmt.Fprintf(os.Stdout, "\nRelative suite paths resolve from the current directory first; if missing,\n")
 		fmt.Fprintf(os.Stdout, "from the Go module root (directory containing go.mod).\n")
 	}
@@ -124,6 +127,27 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Preflight failed: %v\n", err)
 		exitCode = 1
 		return
+	}
+
+	if *runFilter != "" {
+		re, err := regexp.Compile(*runFilter)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid -run regular expression: %v\n", err)
+			exitCode = 1
+			return
+		}
+		filtered := make(map[string]*workspace.Test)
+		for name, t := range suite.Tests {
+			if re.MatchString(name) {
+				filtered[name] = t
+			}
+		}
+		if len(filtered) == 0 {
+			fmt.Fprintf(os.Stderr, "No tests matched -run %q (suite has %d tests)\n", *runFilter, len(suite.Tests))
+			exitCode = 1
+			return
+		}
+		suite.Tests = filtered
 	}
 
 	if format == "console" {
