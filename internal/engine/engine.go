@@ -271,7 +271,37 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) (StartupPha
 	return startupReport, nil
 }
 
+// tcpAddrFromHTTPBaseURL parses an http(s) base URL into host:port for TCP
+// dial readiness checks. It returns "" if raw is empty or not parseable.
+func tcpAddrFromHTTPBaseURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	host := u.Hostname()
+	port := u.Port()
+	if port == "" {
+		if u.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
+}
+
 func inferSUTListenTCPAddr(suite *workspace.Suite) string {
+	if addr := tcpAddrFromHTTPBaseURL(suite.Config.SutBaseURL); addr != "" {
+		return addr
+	}
+
 	names := make([]string, 0, len(suite.Entrypoints))
 	for n := range suite.Entrypoints {
 		names = append(names, n)
@@ -287,23 +317,10 @@ func inferSUTListenTCPAddr(suite *workspace.Suite) string {
 		if raw == "" {
 			return "127.0.0.1:8080"
 		}
-		u, err := url.Parse(raw)
-		if err != nil || u.Host == "" {
-			return "127.0.0.1:8080"
+		if addr := tcpAddrFromHTTPBaseURL(raw); addr != "" {
+			return addr
 		}
-		host := u.Hostname()
-		port := u.Port()
-		if port == "" {
-			if u.Scheme == "https" {
-				port = "443"
-			} else {
-				port = "80"
-			}
-		}
-		if host == "" {
-			host = "127.0.0.1"
-		}
-		return net.JoinHostPort(host, port)
+		return "127.0.0.1:8080"
 	}
 	return ""
 }

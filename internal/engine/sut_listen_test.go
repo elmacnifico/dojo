@@ -12,6 +12,18 @@ import (
 func TestInferSUTListenTCPAddr(t *testing.T) {
 	t.Parallel()
 
+	t.Run("suite sut_base_url wins over entrypoints with empty URL", func(t *testing.T) {
+		s := &workspace.Suite{
+			Config: workspace.DojoConfig{SutBaseURL: "http://127.0.0.1:29473"},
+			Entrypoints: map[string]workspace.EntrypointConfig{
+				"w": {Type: "http", Path: "/trigger"},
+			},
+		}
+		if got := inferSUTListenTCPAddr(s); got != "127.0.0.1:29473" {
+			t.Fatalf("got %q, want 127.0.0.1:29473", got)
+		}
+	})
+
 	t.Run("empty URL defaults to 127.0.0.1:8080", func(t *testing.T) {
 		s := &workspace.Suite{
 			Entrypoints: map[string]workspace.EntrypointConfig{

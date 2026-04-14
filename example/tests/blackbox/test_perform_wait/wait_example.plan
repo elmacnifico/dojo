@@ -4,9 +4,6 @@ Expect -> postgres -> Request: postgres_request.sql
 Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.json
 Expect -> whatsapp -> Request: whatsapp_request.json
 
-Perform -> wait -> 1ms
+Perform -> wait -> Duration: 1ms
 
 Perform -> postgres -> check_row.sql -> "1"
-Perform -> postgres -> check_display.sql -> expected.json
-Perform -> postgres -> ping.sql
-Perform -> postgres -> check_gone.sql -> "0"

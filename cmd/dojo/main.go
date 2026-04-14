@@ -15,6 +15,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/elmacnifico/dojo/internal/cliargv"
 	"github.com/elmacnifico/dojo/internal/engine"
 	"github.com/elmacnifico/dojo/internal/reporter"
 	"github.com/elmacnifico/dojo/internal/workspace"
@@ -105,6 +106,8 @@ func main() {
 		fmt.Fprintf(os.Stdout, "Flags:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stdout, "\nExample:\n")
+		fmt.Fprintf(os.Stdout, "  dojo --help\n")
+		fmt.Fprintf(os.Stdout, "  dojo run --help\n")
 		fmt.Fprintf(os.Stdout, "  dojo run ./example/tests/blackbox\n")
 		fmt.Fprintf(os.Stdout, "  dojo ./example/tests/blackbox\n")
 		fmt.Fprintf(os.Stdout, "  dojo --format json -o results/ ./example/tests/blackbox\n")
@@ -112,6 +115,11 @@ func main() {
 		fmt.Fprintf(os.Stdout, "  dojo --llm-usage ./example/tests/blackbox\n")
 		fmt.Fprintf(os.Stdout, "\nRelative suite paths resolve from the current directory first; if missing,\n")
 		fmt.Fprintf(os.Stdout, "from the Go module root (directory containing go.mod).\n")
+	}
+
+	if cliargv.HelpRequested(os.Args[1:]) {
+		flag.Usage()
+		os.Exit(0)
 	}
 
 	flag.Parse()

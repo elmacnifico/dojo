@@ -259,9 +259,9 @@ func (e *Engine) triggerEntrypoint(ctx context.Context, suite *workspace.Suite, 
 		url := ep.URL
 		if url == "" {
 			url = suite.Config.SutBaseURL
+		}
 		if url == "" {
 			url = "http://127.0.0.1:8080"
-		}
 		}
 
 		req, err := http.NewRequestWithContext(ctx, ep.HTTPMethod(), url+ep.Path, bytes.NewReader(payload))
@@ -286,6 +286,7 @@ func (e *Engine) triggerEntrypoint(ctx context.Context, suite *workspace.Suite, 
 
 		if expectStatus != 0 {
 			if resp.StatusCode != expectStatus {
+				fmt.Printf("triggerEntrypoint got %d from %s\n", resp.StatusCode, req.URL.String())
 				return &MismatchError{
 					Reason:   fmt.Sprintf("expected HTTP status %d, got %d", expectStatus, resp.StatusCode),
 					Expected: strconv.Itoa(expectStatus),
@@ -376,11 +377,32 @@ func (e *Engine) executeSubsequentPhases(ctx context.Context, active *ActiveTest
 	testDir := filepath.Join(e.Workspace.BaseDir, suiteName, id)
 	suiteDir := filepath.Join(e.Workspace.BaseDir, suiteName)
 	for _, ph := range phases {
+		if workspace.IsWaitPerformTarget(ph.Perform) {
+			if err := e.executeWaitPerform(ctx, ph.Perform); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := e.executePostgresPerform(ctx, active, ph.Perform, testDir, suiteDir, livePGURL); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (e *Engine) executeWaitPerform(ctx context.Context, line workspace.ParsedLine) error {
+	d, err := workspace.ParseWaitPerformDuration(line)
+	if err != nil {
+		return err
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // executePostgresPerform runs a SQL query against the live Postgres and asserts

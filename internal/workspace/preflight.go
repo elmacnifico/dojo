@@ -196,6 +196,15 @@ func ValidateTestPlanPerformPhases(suite *Suite, test *Test, suiteDir, testDir s
 			}
 			continue
 		}
+		if IsWaitPerformTarget(ph.Perform) {
+			if len(ph.Expects) > 0 {
+				return fmt.Errorf("Perform -> wait cannot be followed by Expect lines in the same phase")
+			}
+			if err := ValidateWaitPerformLine(ph.Perform); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := ValidatePostgresPerformLine(ph.Perform, testDir, suiteDir); err != nil {
 			return err
 		}

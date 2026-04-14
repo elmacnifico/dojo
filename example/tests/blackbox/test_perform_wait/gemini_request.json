@@ -1,0 +1,19 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Register me (Perform -> wait example)"
+        }
+      ]
+    }
+  ],
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "You are a routing assistant. Resolve queries for user usr_wait_ex."
+      }
+    ]
+  }
+}

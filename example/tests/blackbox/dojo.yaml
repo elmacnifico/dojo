@@ -1,5 +1,8 @@
 concurrency: 4
-sut_command: "go run ../../sut/main.go"
+# Bind the example SUT away from :8080 so local apps (e.g. another HTTP server)
+# on 8080 do not prevent the suite from starting. The SUT reads PORT; triggers use sut_base_url.
+sut_base_url: "http://127.0.0.1:29473"
+sut_command: "PORT=29473 go run ../../sut/main.go"
 timeouts:
   perform: 5s
   expect: 2s

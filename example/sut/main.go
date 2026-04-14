@@ -152,12 +152,33 @@ func emitDojoStartupProbe() {
 	fmt.Printf("[SUT] startup probe finished status=%d\n", resp.StatusCode)
 }
 
+// sutListenPort returns the TCP port segment (no leading colon). When PORT is
+// unset, the example SUT defaults to 8080 so `go run .` from this directory
+// still works. Dojo's blackbox suite sets PORT to avoid colliding with other
+// local services that bind :8080.
+func sutListenPort() string {
+	p := strings.TrimSpace(os.Getenv("PORT"))
+	if p == "" {
+		return "8080"
+	}
+	return strings.TrimPrefix(p, ":")
+}
+
+func sutListenAddr() string {
+	return ":" + sutListenPort()
+}
+
+func sutHealthCheckURL() string {
+	return "http://127.0.0.1:" + sutListenPort() + "/health"
+}
+
 // waitHealthThenStartupProbe waits until this process is serving /health, then
 // emits one outbound Gemini request for Dojo's startup.plan phase.
 func waitHealthThenStartupProbe() {
 	client := &http.Client{Timeout: 2 * time.Second}
+	healthURL := sutHealthCheckURL()
 	for i := 0; i < 150; i++ {
-		resp, err := client.Get("http://127.0.0.1:8080/health")
+		resp, err := client.Get(healthURL)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			resp.Body.Close()
 			emitDojoStartupProbe()
@@ -199,10 +220,10 @@ func main() {
 	http.HandleFunc("/ask", handleAsk)
 	http.HandleFunc("/maxcalls", handleMaxCalls)
 
-	port := ":8080"
+	addr := sutListenAddr()
 	go waitHealthThenStartupProbe()
-	fmt.Printf("[SUT] Starting server on %s\n", port)
-	if err := http.ListenAndServe(port, nil); err != nil {
+	fmt.Printf("[SUT] Starting server on %s\n", addr)
+	if err := http.ListenAndServe(addr, nil); err != nil {
 		fmt.Printf("[SUT] Server crashed: %v\n", err)
 		os.Exit(1)
 	}

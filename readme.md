@@ -68,7 +68,16 @@ go run cmd/dojo/main.go ./example/tests/blackbox
 # Or after building:
 dojo ./example/tests/blackbox
 dojo --format json -o results/ ./example/tests/blackbox
+
+# Usage (works with optional `run`, e.g. `dojo run --help`):
+dojo --help
 ```
+
+The example blackbox suite starts the SUT on **port 29473** (see `sut_base_url` /
+`PORT` in `example/tests/blackbox/dojo.yaml`) so another process on **:8080**
+does not block the run. The **eval** example suite (`./example/tests/eval`) uses
+**port 29474** the same way and needs a valid **`GEMINI_API_KEY`** for
+`Evaluate Response` checks (see `example/tests/eval/.env` / `.env.local`).
 
 Dojo will:
 
@@ -298,6 +307,25 @@ discovered by convention, `.plan` files read like pure intent.
 **Syntax:** `Action -> Target -> Clause -> Clause`
 
 Every `.plan` **must** begin with a `Perform` action to trigger the SUT.
+
+### Multi-phase plans: `Perform -> postgres` and `Perform -> wait`
+
+Each additional `Perform` line starts a **new phase** after the previous phase
+finishes (all `Expect` lines for the HTTP trigger are satisfied, then any
+`Perform -> postgres` / `Perform -> wait` steps run in order).
+
+- **`Perform -> postgres`** runs a SQL fixture against **live** Postgres (see
+  suite `dojo.yaml` for a live `postgres` API). Use `Query:` / `Expect:` clauses
+  or the positional forms documented in the example suite
+  (`example/tests/blackbox/test_perform_postgres/`). For **`Perform -> wait`**
+  only, see the smaller example **`example/tests/blackbox/test_perform_wait/`**
+  (`wait_example.plan` uses `Duration: 1ms` between the HTTP phase and a DB check).
+
+- **`Perform -> wait`** pauses the test for a **Go duration** (e.g. `500ms`,
+  `2s`). Supply it as `Duration: 500ms` or as a single positional token
+  (`Perform -> wait -> 250ms`). The duration must be positive. There must be
+  **no** `Expect` lines in a wait phase (only the wait line for that phase).
+  The pause respects test cancellation (`context`).
 
 ### Request Matching: Normalized Full Equality
 

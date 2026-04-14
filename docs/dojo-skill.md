@@ -318,7 +318,7 @@ Syntax: `Action -> Target -> Clause: value -> Clause: value`
 
 | Action | Purpose |
 |--------|---------|
-| `Perform` | Trigger the SUT or execute a DB assertion. Target is an entrypoint path (e.g. `entrypoints/webhook`) or `postgres` for direct DB queries. |
+| `Perform` | Trigger the SUT, pause, or run a DB assertion. Target is an entrypoint path (e.g. `entrypoints/webhook`), `postgres` for direct DB queries, or `wait` for a timed pause between phases. |
 | `Expect` | Declare an expected outbound call. Target is an API name (e.g. `postgres`, `gemini`). |
 
 ### Clauses
@@ -329,6 +329,7 @@ Syntax: `Action -> Target -> Clause: value -> Clause: value`
 | `ExpectStatus:` | Perform (entrypoint) | Assert the SUT's HTTP response status code (e.g. `"200"`, `"403"`). Without this, Dojo fails on any status >= 400. |
 | `Query:` | Perform (postgres) | SQL fixture file to execute against the live database. |
 | `Expect:` | Perform (postgres) | Assertion on query result: `"N"` for row count, `file.json` for JSON comparison, or omit for OK-only. |
+| `Duration:` | Perform (wait) | Go duration string (e.g. `500ms`, `2s`). Alternatively use a single positional duration: `Perform -> wait -> 250ms`. No `Expect` lines may follow a wait `Perform` in the same phase. |
 | `Request:` | Expect | Fixture file containing the expected outbound payload. |
 | `Respond:` | Expect | Fixture file returned as the mock response body. Cannot be used with live APIs. |
 | `MaxCalls:` | Expect | Number of times this expectation must be matched before it is fulfilled. Defaults to 1. |
@@ -542,6 +543,11 @@ A plan can contain multiple `Perform` lines. Each `Perform` starts a new
 phase. The next `Perform` fires only after the previous phase's expectations are
 fulfilled.
 
+**`Perform -> wait`** (optional between phases) sleeps for a positive Go
+duration before the next phase. Example: `Perform -> wait -> Duration: 1s` or
+`Perform -> wait -> 1ms`. Do not put `Expect` lines after a wait `Perform` in
+the same phase.
+
 Use `Perform -> postgres` to query the live database directly after the SUT
 finishes and assert on the result:
 
@@ -578,8 +584,12 @@ exists.
 
 ### Runnable example (example suite)
 
-The repo ships `example/tests/blackbox/test_perform_postgres/` which chains all
-four `Perform -> postgres` modes in **one plan**:
+The repo ships `example/tests/blackbox/test_perform_wait/` with a short plan
+that uses **`Perform -> wait -> Duration: 1ms`** between outbound expectations
+and a `Perform -> postgres` check.
+
+`example/tests/blackbox/test_perform_postgres/` chains all four
+`Perform -> postgres` modes (and a positional `Perform -> wait -> 1ms`) in **one plan**:
 
 ```text
 Perform -> POST /webhook -> Payload: incoming.json

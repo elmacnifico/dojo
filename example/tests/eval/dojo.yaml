@@ -1,5 +1,7 @@
 concurrency: 6
-sut_command: "go run ../../sut/main.go"
+# Dedicated port so the example SUT does not hit whatever is on :8080 (same pattern as blackbox).
+sut_base_url: "http://127.0.0.1:29474"
+sut_command: "PORT=29474 go run ../../sut/main.go"
 evaluator:
   provider: gemini
   model: gemini-2.0-flash

@@ -10,8 +10,8 @@ import (
 	"testing"
 )
 
-// Example blackbox SUT binds :8080; skip when something else already holds it
-// (e.g. a leaked SUT from a prior failed run before StopProxies ran on every path).
+// Example blackbox suite binds the SUT on 127.0.0.1:29473 (see example/tests/blackbox/dojo.yaml).
+// Skip when that port is busy (e.g. a leaked SUT from a prior failed run).
 func tcpListenFree(addr string) bool {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -22,8 +22,8 @@ func tcpListenFree(addr string) bool {
 }
 
 func TestDojoCLI_ExampleSuite(t *testing.T) {
-	if !tcpListenFree("127.0.0.1:8080") {
-		t.Skip("127.0.0.1:8080 busy (example SUT needs this port)")
+	if !tcpListenFree("127.0.0.1:29473") {
+		t.Skip("127.0.0.1:29473 busy (example blackbox SUT needs this port)")
 	}
 
 	tmpDir := t.TempDir()

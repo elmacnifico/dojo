@@ -62,18 +62,20 @@ You must follow the official **Go Doc** format for all exported identifiers:
 * **No init():** Avoid `init()` functions to maintain deterministic startup.
 * **No Flakiness:** All tests must pass with the `-race` detector enabled.
 
-## 8. Validation: Always Run the Example Suite
-After any change that touches the engine, workspace loader, proxies, adapters, example SUT, or example fixtures, run the full example suite and confirm it passes:
+## 8. Validation: Always Run the Example Suites Before Committing
+After any change that touches the engine, workspace loader, proxies, adapters, example SUT, or example fixtures, run **both** shipped example suites and confirm they pass **before you commit or open a PR**. Unit tests alone are not sufficient.
 
 ```bash
 go run cmd/dojo/main.go ./example/tests/blackbox
+go run cmd/dojo/main.go ./example/tests/eval
 ```
 
-The example blackbox suite includes **`startup.plan`**, which expects the example SUT to call the mocked Gemini API once during boot (see `example/sut/main.go`). That exercises the startup phase end-to-end.
+From the **repository root** (`dojo/`). The example SUT reads **`PORT`** (see `example/sut/main.go`); **`example/tests/blackbox/dojo.yaml`** and **`example/tests/eval/dojo.yaml`** set `sut_base_url` / `PORT` to non-8080 ports so a random app on `:8080` does not break runs.
 
-All tests (including the example suite) must pass before considering a task complete. Unit tests alone are not sufficient — the example suite is the integration smoke test for the entire system.
+- **Blackbox** (`./example/tests/blackbox`) includes **`startup.plan`**, which expects the SUT to call the mocked Gemini API once during boot — startup phase end-to-end.
+- **Eval** (`./example/tests/eval`) exercises **`Evaluate Response`** and the AI evaluator; it needs **`GEMINI_API_KEY`** (set `example/tests/eval/.env.local` from `.env.local` template or export in your shell). If the key is missing, preflight fails before tests run.
 
-The CLI is refactored so **`StopProxies` always runs** on non-zero exit (Go `os.Exit` skips `defer`, which previously leaked the SUT on `:8080`). Optional end-to-end check: `go test -tags=integration -race ./cmd/dojo/...` (runs the example suite via a built binary; default `go test ./...` skips it because other packages may use `:8080` in parallel).
+The CLI is refactored so **`StopProxies` always runs** on non-zero exit (Go `os.Exit` skips `defer`, which previously leaked the SUT child). Optional end-to-end check: `go test -tags=integration -race ./cmd/dojo/...` (runs the blackbox example via a built binary; default `go test ./...` skips it when ports are busy).
 
 **README and suite-authoring guide:** Contributor overview in [readme.md](readme.md). The shipped reference for writing suites (and for using as a Cursor Agent Skill) is **[docs/dojo-skill.md](docs/dojo-skill.md)**. To activate it in Cursor, copy or symlink that file to `.cursor/skills/dojo/SKILL.md` in this repo or in a consumer repo. Do not add a second standalone `SKILL.md` at the repository root.
 
