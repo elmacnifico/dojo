@@ -148,8 +148,8 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) (StartupPha
 		}
 	}
 
-	if suite.Config.Timeouts.Perform.Duration > 0 {
-		e.HTTPProxy.UpstreamTimeout = suite.Config.Timeouts.Perform.Duration
+	if suite.Config.Timeouts.Expect.Duration > 0 {
+		e.HTTPProxy.UpstreamTimeout = suite.Config.Timeouts.Expect.Duration
 	}
 	if err := e.HTTPProxy.Start(ctx, "127.0.0.1:0", e); err != nil {
 		return StartupPhaseReport{}, fmt.Errorf("failed to start HTTP Proxy: %w", err)

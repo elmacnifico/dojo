@@ -40,7 +40,7 @@ func (a *ActiveTest) closeDoneIfAllFulfilledLocked() {
 	allDone := true
 	for _, slice := range a.Expectations {
 		for _, e := range slice {
-			if !e.Fulfilled {
+			if !e.Fulfilled && e.MatchCount == 0 {
 				allDone = false
 				break
 			}
