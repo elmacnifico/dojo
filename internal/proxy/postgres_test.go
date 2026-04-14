@@ -15,9 +15,9 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"dojo/internal/engine"
-	"dojo/internal/testutil"
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/engine"
+	"github.com/elmacnifico/dojo/internal/testutil"
+	"github.com/elmacnifico/dojo/internal/workspace"
 )
 
 func TestPostgresQueryCapture(t *testing.T) {

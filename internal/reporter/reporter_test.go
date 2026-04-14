@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"dojo/internal/workspace"
-	"dojo/internal/reporter"
+	"github.com/elmacnifico/dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/reporter"
 )
 
 func TestReporter(t *testing.T) {

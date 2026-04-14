@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"dojo/internal/engine"
-	"dojo/internal/proxy"
-	"dojo/internal/workspace"
-	"dojo/pkg/dojo"
+	"github.com/elmacnifico/dojo/internal/engine"
+	"github.com/elmacnifico/dojo/internal/proxy"
+	"github.com/elmacnifico/dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/pkg/dojo"
 )
 
 type failingMatchTable struct{}

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"dojo/internal/engine"
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/engine"
+	"github.com/elmacnifico/dojo/internal/workspace"
 )
 
 func TestAIEvaluator(t *testing.T) {

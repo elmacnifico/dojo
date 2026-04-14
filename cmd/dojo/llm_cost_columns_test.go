@@ -1,7 +1,7 @@
 package main
 
 import (
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/workspace"
 	"testing"
 )
 

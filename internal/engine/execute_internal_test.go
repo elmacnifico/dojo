@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/workspace"
 )
 
 func TestPrepareStartupPlan(t *testing.T) {

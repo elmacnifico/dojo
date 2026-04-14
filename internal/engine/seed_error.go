@@ -3,7 +3,7 @@ package engine
 import (
 	"fmt"
 
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/workspace"
 )
 
 // TestSeedError is returned when applying a test's seed/*.sql scripts against

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"dojo/pkg/dojo"
+	"github.com/elmacnifico/dojo/pkg/dojo"
 
 	"github.com/jackc/pgproto3/v2"
 )

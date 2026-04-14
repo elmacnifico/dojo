@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"dojo/internal/proxy"
-	"dojo/pkg/dojo"
+	"github.com/elmacnifico/dojo/internal/proxy"
+	"github.com/elmacnifico/dojo/pkg/dojo"
 )
 
 // stubMatchTable is a no-op MatchTable for tests that don't need matching.

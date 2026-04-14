@@ -30,5 +30,8 @@ Icon
 # Vendor directory
 vendor/
 
-# Environment variable files with secrets
-.env.localsut
+# Environment variable files with secrets (suite-local .env / .env.local)
+.env
+.env.local
+# Committed placeholder for the eval example suite (comments only)
+!example/tests/eval/.env

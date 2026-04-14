@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"dojo/internal/testutil"
+	"github.com/elmacnifico/dojo/internal/testutil"
 )
 
 func TestCheckEvaluatorAPIKey_Unset(t *testing.T) {

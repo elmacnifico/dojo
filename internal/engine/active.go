@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/workspace"
 )
 
 // Expectation tracks the completion state of a single test expectation.

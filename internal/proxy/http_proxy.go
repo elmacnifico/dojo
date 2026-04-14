@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"dojo/pkg/dojo"
+	"github.com/elmacnifico/dojo/pkg/dojo"
 )
 
 const defaultUpstreamTimeout = 30 * time.Second

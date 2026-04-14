@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"dojo/internal/engine"
-	"dojo/internal/testutil"
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/engine"
+	"github.com/elmacnifico/dojo/internal/testutil"
+	"github.com/elmacnifico/dojo/internal/workspace"
 
 	"github.com/jackc/pgproto3/v2"
 )

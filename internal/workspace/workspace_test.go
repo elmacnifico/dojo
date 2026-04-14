@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"dojo/internal/testutil"
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/testutil"
+	"github.com/elmacnifico/dojo/internal/workspace"
 )
 
 func TestLoadWorkspace(t *testing.T) {

@@ -15,9 +15,9 @@ import (
 	"sync"
 	"syscall"
 
-	"dojo/internal/engine"
-	"dojo/internal/reporter"
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/engine"
+	"github.com/elmacnifico/dojo/internal/reporter"
+	"github.com/elmacnifico/dojo/internal/workspace"
 )
 
 // argvHasLLMUsage reports whether raw argv contains the LLM usage flag. Needed

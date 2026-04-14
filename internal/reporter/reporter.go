@@ -9,7 +9,7 @@ import (
 	"strings"
 	"text/template"
 
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/workspace"
 )
 
 // Reporter handles outputting execution results to the filesystem.

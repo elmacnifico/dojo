@@ -11,8 +11,8 @@ import (
 	"strings"
 	"text/template"
 
-	"dojo/internal/workspace"
-	"dojo/pkg/dojo"
+	"github.com/elmacnifico/dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/pkg/dojo"
 )
 
 // AIEvaluator implements dojo.Evaluator using generative AI.

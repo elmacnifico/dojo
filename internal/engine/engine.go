@@ -16,8 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"dojo/internal/proxy"
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/proxy"
+	"github.com/elmacnifico/dojo/internal/workspace"
 )
 
 // EngineOption configures optional Engine behavior.

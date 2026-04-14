@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/workspace"
 
 	_ "github.com/lib/pq"
 )

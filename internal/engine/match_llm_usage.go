@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/workspace"
 )
 
 func intFromAny(v any) (int, bool) {

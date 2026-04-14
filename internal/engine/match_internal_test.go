@@ -3,7 +3,7 @@ package engine
 import (
 	"testing"
 
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/workspace"
 
 	"github.com/jackc/pgproto3/v2"
 )

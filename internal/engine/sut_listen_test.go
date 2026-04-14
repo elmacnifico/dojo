@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/workspace"
 )
 
 func TestInferSUTListenTCPAddr(t *testing.T) {

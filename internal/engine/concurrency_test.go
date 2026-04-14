@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"dojo/internal/engine"
+	"github.com/elmacnifico/dojo/internal/engine"
 )
 
 func TestNewRunnerClampsToOne(t *testing.T) {

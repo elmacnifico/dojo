@@ -3,7 +3,7 @@ package workspace_test
 import (
 	"testing"
 
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/workspace"
 )
 
 func TestParsePlan(t *testing.T) {

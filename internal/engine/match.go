@@ -10,8 +10,8 @@ import (
 	"text/template"
 	"strings"
 
-	"dojo/internal/workspace"
-	"dojo/pkg/dojo"
+	"github.com/elmacnifico/dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/pkg/dojo"
 
 	"github.com/jackc/pgproto3/v2"
 )

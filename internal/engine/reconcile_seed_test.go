@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"dojo/internal/workspace"
+	"github.com/elmacnifico/dojo/internal/workspace"
 )
 
 func TestReconcileSummaryForSeeding_Nil(t *testing.T) {
