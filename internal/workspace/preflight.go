@@ -25,7 +25,8 @@ func CheckEvaluatorAPIKey(suite *Suite) error {
 }
 
 // PreflightLoadedSuite runs static checks on a loaded suite: evaluator API key
-// (if configured) and Perform resolution for every test plan phase.
+// (if configured), Perform resolution for every test plan phase, and seed/check
+// SQL validations when live Postgres is configured.
 func PreflightLoadedSuite(ws *Workspace, suiteName string) error {
 	if ws == nil {
 		return fmt.Errorf("workspace is nil")
@@ -47,7 +48,25 @@ func PreflightLoadedSuite(ws *Workspace, suiteName string) error {
 			return fmt.Errorf("test %s: %w", testName, err)
 		}
 	}
+	if hasLivePostgres(suite) {
+		if err := ValidateUniqueSeedKeys(suiteDir, suite.Tests); err != nil {
+			return fmt.Errorf("seed validation: %w", err)
+		}
+		if err := ValidateCheckSQLScoping(suiteDir, suite.Tests); err != nil {
+			return fmt.Errorf("check SQL validation: %w", err)
+		}
+	}
 	return nil
+}
+
+// hasLivePostgres reports whether the suite has at least one live Postgres API.
+func hasLivePostgres(suite *Suite) bool {
+	for _, api := range suite.APIs {
+		if (api.Protocol == "postgres" || strings.HasPrefix(api.URL, "postgres://")) && api.Mode == "live" {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateStartupPlanFixtures parses startup.plan and wires Expect fixtures the
