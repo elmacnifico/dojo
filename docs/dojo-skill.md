@@ -814,12 +814,12 @@ After changing engine, workspace, proxies, or example SUT/fixtures, also run **`
 Pass `--trace` to log all HTTP and Postgres traffic (truncated, correlated by
 test ID) to stderr via `slog`. This does not affect `--format` output.
 
-Dojo automatically parses token usage from live Gemini (`usageMetadata`) and
-OpenAI (`usage`) responses. Counts are aggregated per-API and per-test. In
-console output, total tokens appear after each test result
-(`PASS test_foo (1.2s) [3847 tokens]`). In JSON output, see the `llm_usage`
-field on each test result. No configuration needed -- if no live LLM responses
-are observed, the field is omitted.
+Dojo parses token usage from live LLM JSON (Gemini `usageMetadata`, OpenAI
+`usage`, Anthropic-style `input_tokens` / `output_tokens`, etc.). **Console**
+does not print token usage by default; use **`--llm-usage`** for tabular
+per-test and suite breakdowns (the flag is honored even after `run` or the
+suite path). **JSON / jsonl** always expose `llm_usage`,
+`llm_usage_by_api`, and `llm_usage_derived` when present.
 
 ## Checklist: Adding a New Test
 

@@ -627,20 +627,62 @@ All trace output goes to stderr via `slog` and does not affect stdout formats
 
 #### LLM token tracking
 
-Dojo automatically parses token usage from live API responses. It recognizes
-Gemini (`usageMetadata`) and OpenAI (`usage`) response formats. Token counts
-are aggregated per-API and as a total for each test.
+Dojo automatically parses token usage from **live** HTTP API responses (see
+`internal/engine/match_llm_usage.go`). Recognized shapes:
 
-In **console** output, total tokens are appended to each test result:
+| Source | JSON location | Notes |
+|--------|---------------|--------|
+| **Google Gemini** | Top-level `usageMetadata` | `promptTokenCount`, `candidatesTokenCount`, `totalTokenCount`, `cachedContentTokenCount`, `toolUsePromptTokenCount`, `thoughtsTokenCount`, etc. Parsed **before** top-level `usage` so Gemini bodies are never misclassified. |
+| **OpenAI Chat Completions** | `usage` | `prompt_tokens`, `completion_tokens`, `total_tokens`, plus nested `prompt_tokens_details` / `completion_tokens_details` (e.g. `cached_tokens`, `reasoning_tokens`, `audio_tokens`, predicted-output token fields). |
+| **OpenAI Responses-style** | `usage` | When `usage` has `input_tokens` / `output_tokens` and **no** `prompt_tokens`, counts map like Anthropic (same branch). If both `prompt_tokens` and `input_tokens` appear, Chat Completions fields win. |
+| **Anthropic Messages** | `usage` | `input_tokens` → prompt, `output_tokens` → completion, `cache_creation_input_tokens`, `cache_read_input_tokens`. |
+| **Nested** | `response.usage` | Same rules as top-level `usage` when present. |
+
+Mock LLM fixtures may include the same usage blocks; those counts are aggregated
+the same way.
+
+Counts are **summed** for every matching response in a test. Per-API totals are
+stored under `llm_usage_by_api` (API name keys) when at least one API has
+non-zero usage.
+
+**Derived rates** (on `llm_usage_derived`, omitted when not applicable):
+
+- `prompt_cache_hit_rate` — `sum(cached_prompt_tokens) / sum(prompt_tokens)` when `sum(cached_prompt_tokens) > 0` and `sum(prompt_tokens) > 0`. `cached_prompt_tokens` comes from OpenAI `cached_tokens` and Gemini `cachedContentTokenCount`.
+- `cache_read_input_rate` — `sum(cache_read_input_tokens) / sum(prompt_tokens)` when `sum(cache_read_input_tokens) > 0` and `sum(prompt_tokens) > 0` (Anthropic cache reads vs billable input).
+
+Numerators and denominators are also emitted on `llm_usage_derived` for CI.
+
+In **console** output (default), LLM token counts are **not** printed on stdout
+(only `PASS` / `FAIL` lines and the results summary). Pass **`--llm-usage`** for
+tabular per-test and suite breakdowns (core metrics, extra counters, derived rates, and
+per-API rows). JSON and jsonl output are unchanged and always include full
+`llm_usage` fields when usage was observed. The CLI also recognizes
+`--llm-usage` anywhere on the command line (e.g. `dojo run ./suite --llm-usage`
+or `dojo run --llm-usage ./suite`), because the Go `flag` parser otherwise stops
+at the first non-flag token.
 
 ```
-PASS  test_intent_agent  (1.2s) [3847 tokens]
+PASS  test_intent_agent  (1.2s)
+
+      --- LLM (test_intent_agent) ---
+      ┌────────┬───────┬────────┬────────┬──────────┐
+      │ API    │ Input │ Cached │ Output │ Thinking │
+      ├────────┼───────┼────────┼────────┼──────────┤
+      │ gemini │ 3000  │ 0      │ 847    │ 0        │
+      └────────┴───────┴────────┴────────┴──────────┘
 ```
 
-In **JSON** output, the `llm_usage` field appears on each test result with
-`prompt_tokens`, `completion_tokens`, and `total_tokens`. Token tracking is
-automatic -- no configuration needed. If no live LLM responses are observed,
-the field is omitted.
+Columns are **Input** (prompt minus cached minus cache-read), **Cached** (cached
+prompt plus cache-read), **Thinking** (reasoning plus thoughts), and **Output**
+(billable completion-side tokens: when Gemini-style `thoughtsTokenCount` is
+present, candidates plus thinking; otherwise OpenAI-style nested counts subtract
+thinking from completion). Extra counters and derived rates print as bullets
+under the table.
+
+In **JSON** / **jsonl** output, each test result may include `llm_usage` (all
+summed counters), `llm_usage_by_api`, and `llm_usage_derived`. Tracking is
+automatic; fields are omitted when no usage was observed. **Streaming/SSE**
+usage (final chunk only) is not parsed yet.
 
 ## Outputs and Artifacts
 

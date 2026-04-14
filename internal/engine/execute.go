@@ -31,8 +31,8 @@ type MismatchError struct {
 
 func (e *MismatchError) Error() string { return e.Reason }
 
-func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Test, suite *workspace.Suite, suiteName string) (workspace.LLMUsage, error) {
-	var usage workspace.LLMUsage
+func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Test, suite *workspace.Suite, suiteName string) (workspace.LLMUsage, map[string]workspace.LLMUsage, error) {
+	var zero workspace.LLMUsage
 	livePostgres := false
 	var livePGURL string
 	for _, api := range suite.APIs {
@@ -52,22 +52,22 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 		if seedErr != nil {
 			ts := &TestSeedError{TestName: id, Err: seedErr}
 			e.recordFirstSeedFailure(ts)
-			return usage, ts
+			return zero, nil, ts
 		}
 	}
 
 	doc, err := workspace.ParsePlan(test.Plan)
 	if err != nil {
-		return usage, fmt.Errorf("failed to parse plan: %w", err)
+		return zero, nil, fmt.Errorf("failed to parse plan: %w", err)
 	}
 
 	if len(doc.Lines) == 0 || strings.ToLower(doc.Lines[0].Action) != "perform" {
-		return usage, fmt.Errorf("plan must start with a Perform action")
+		return zero, nil, fmt.Errorf("plan must start with a Perform action")
 	}
 
 	phases := workspace.SplitPlanPhases(doc.Lines)
 	if len(phases) == 0 {
-		return usage, fmt.Errorf("plan must start with a Perform action")
+		return zero, nil, fmt.Errorf("plan must start with a Perform action")
 	}
 
 	// Phase 1: entrypoint trigger + observer expectations.
@@ -75,26 +75,26 @@ func (e *Engine) executeTest(ctx context.Context, id string, test *workspace.Tes
 
 	active, ep, payload, expectStatus, err := e.prepareEntrypoint(ctx, id, test, suite, suiteName, firstPhase)
 	if err != nil {
-		return usage, err
+		return zero, nil, err
 	}
 
 	e.Registry.Register(id, active)
 	defer e.Registry.Unregister(id)
 
 	if err := e.triggerEntrypoint(ctx, suite, ep, payload, expectStatus); err != nil {
-		return active.TotalUsage, err
+		return active.TotalUsage, filterLLMUsageByAPI(active.APIUsage), err
 	}
 
 	if err := e.awaitPhaseExpectations(ctx, active); err != nil {
-		return active.TotalUsage, err
+		return active.TotalUsage, filterLLMUsageByAPI(active.APIUsage), err
 	}
 
 	// Subsequent phases: inline assertions (e.g. Perform -> postgres).
 	if err := e.executeSubsequentPhases(ctx, active, id, suiteName, phases[1:], livePGURL); err != nil {
-		return active.TotalUsage, err
+		return active.TotalUsage, filterLLMUsageByAPI(active.APIUsage), err
 	}
 
-	return active.TotalUsage, nil
+	return active.TotalUsage, filterLLMUsageByAPI(active.APIUsage), nil
 }
 
 func (e *Engine) prepareEntrypoint(ctx context.Context, id string, test *workspace.Test, suite *workspace.Suite, suiteName string, phase workspace.PlanPhase) (*ActiveTest, workspace.EntrypointConfig, []byte, int, error) {

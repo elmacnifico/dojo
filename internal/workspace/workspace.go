@@ -218,17 +218,31 @@ type LLMUsage struct {
 	PromptTokens     int `json:"prompt_tokens" yaml:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens" yaml:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens" yaml:"total_tokens"`
+
+	// Extended counters (additive JSON; summed across calls in a test).
+	CachedPromptTokens       int `json:"cached_prompt_tokens,omitempty" yaml:"cached_prompt_tokens,omitempty"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty" yaml:"cache_read_input_tokens,omitempty"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty" yaml:"cache_creation_input_tokens,omitempty"`
+	ReasoningTokens          int `json:"reasoning_tokens,omitempty" yaml:"reasoning_tokens,omitempty"`
+	AudioPromptTokens        int `json:"audio_prompt_tokens,omitempty" yaml:"audio_prompt_tokens,omitempty"`
+	AudioCompletionTokens    int `json:"audio_completion_tokens,omitempty" yaml:"audio_completion_tokens,omitempty"`
+	AcceptedPredictionTokens int `json:"accepted_prediction_tokens,omitempty" yaml:"accepted_prediction_tokens,omitempty"`
+	RejectedPredictionTokens int `json:"rejected_prediction_tokens,omitempty" yaml:"rejected_prediction_tokens,omitempty"`
+	ThoughtsTokens           int `json:"thoughts_tokens,omitempty" yaml:"thoughts_tokens,omitempty"`
+	ToolUsePromptTokens      int `json:"tool_use_prompt_tokens,omitempty" yaml:"tool_use_prompt_tokens,omitempty"`
 }
 
 // TestResult captures the outcome of a single test execution.
 type TestResult struct {
-	TestName   string        `json:"test_name" yaml:"test_name"`
-	Status     string        `json:"status" yaml:"status"` // "pass" or "fail"
-	DurationMs int64         `json:"duration_ms" yaml:"duration_ms"`
-	Reason     string        `json:"reason,omitempty" yaml:"reason,omitempty"`
-	Expected   string        `json:"expected,omitempty" yaml:"expected,omitempty"`
-	Actual     string        `json:"actual,omitempty" yaml:"actual,omitempty"`
-	LLMUsage   *LLMUsage     `json:"llm_usage,omitempty" yaml:"llm_usage,omitempty"`
+	TestName        string             `json:"test_name" yaml:"test_name"`
+	Status          string             `json:"status" yaml:"status"` // "pass" or "fail"
+	DurationMs      int64              `json:"duration_ms" yaml:"duration_ms"`
+	Reason          string             `json:"reason,omitempty" yaml:"reason,omitempty"`
+	Expected        string             `json:"expected,omitempty" yaml:"expected,omitempty"`
+	Actual          string             `json:"actual,omitempty" yaml:"actual,omitempty"`
+	LLMUsage        *LLMUsage          `json:"llm_usage,omitempty" yaml:"llm_usage,omitempty"`
+	LLMUsageByAPI   map[string]LLMUsage `json:"llm_usage_by_api,omitempty" yaml:"llm_usage_by_api,omitempty"`
+	LLMUsageDerived *LLMUsageDerived   `json:"llm_usage_derived,omitempty" yaml:"llm_usage_derived,omitempty"`
 }
 
 // TestFailure captures a failed assertion during test execution.

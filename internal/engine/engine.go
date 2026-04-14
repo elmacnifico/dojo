@@ -351,6 +351,34 @@ func (e *Engine) StopProxies() error {
 	return errors.Join(pgErr, httpErr)
 }
 
+func filterLLMUsageByAPI(m map[string]workspace.LLMUsage) map[string]workspace.LLMUsage {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]workspace.LLMUsage)
+	for k, v := range m {
+		if v.AnyUsage() {
+			out[k] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func attachLLMUsageToTestResult(tr *workspace.TestResult, total workspace.LLMUsage, byAPI map[string]workspace.LLMUsage) {
+	if !total.AnyUsage() {
+		return
+	}
+	u := total
+	tr.LLMUsage = &u
+	if len(byAPI) > 0 {
+		tr.LLMUsageByAPI = byAPI
+	}
+	tr.LLMUsageDerived = workspace.ComputeLLMUsageDerived(total)
+}
+
 // RunSuite executes all tests in a Suite concurrently. The optional onResult
 // callback is invoked (from arbitrary goroutines) as each test completes,
 // enabling streaming output in the CLI.
@@ -399,7 +427,7 @@ func (e *Engine) RunSuite(ctx context.Context, suiteName string, onResult func(w
 				}
 
 				start := time.Now()
-				usage, err := e.executeTest(ctx, id, t, suite, suiteName)
+				usage, usageByAPI, err := e.executeTest(ctx, id, t, suite, suiteName)
 				dur := time.Since(start)
 
 				mu.Lock()
@@ -409,9 +437,7 @@ func (e *Engine) RunSuite(ctx context.Context, suiteName string, onResult func(w
 					TestName:   id,
 					DurationMs: dur.Milliseconds(),
 				}
-				if usage.TotalTokens > 0 {
-					tr.LLMUsage = &usage
-				}
+				attachLLMUsageToTestResult(&tr, usage, usageByAPI)
 
 				if err != nil {
 					tr.Status = "fail"

@@ -311,19 +311,7 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte, req
 		// Parse usage from mock response for tracking/reporting
 		if activeTest != nil {
 			if usage, ok := parseUsage(payload); ok {
-				activeTest.mu.Lock()
-				if activeTest.APIUsage == nil {
-					activeTest.APIUsage = make(map[string]workspace.LLMUsage)
-				}
-				curr := activeTest.APIUsage[apiName]
-				curr.PromptTokens += usage.PromptTokens
-				curr.CompletionTokens += usage.CompletionTokens
-				curr.TotalTokens += usage.TotalTokens
-				activeTest.APIUsage[apiName] = curr
-				activeTest.TotalUsage.PromptTokens += usage.PromptTokens
-				activeTest.TotalUsage.CompletionTokens += usage.CompletionTokens
-				activeTest.TotalUsage.TotalTokens += usage.TotalTokens
-				activeTest.mu.Unlock()
+				addUsageToActiveTest(activeTest, apiName, usage)
 			}
 		}
 	}
@@ -332,44 +320,6 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte, req
 }
 
 // ProcessResponse validates the intercepted live response payload for a specific API.
-func parseUsage(payload []byte) (workspace.LLMUsage, bool) {
-	var usage workspace.LLMUsage
-	var data map[string]any
-	if err := json.Unmarshal(payload, &data); err != nil {
-		return usage, false
-	}
-
-	found := false
-	if u, ok := data["usage"].(map[string]any); ok {
-		if pt, ok := u["prompt_tokens"].(float64); ok {
-			usage.PromptTokens = int(pt)
-			found = true
-		}
-		if ct, ok := u["completion_tokens"].(float64); ok {
-			usage.CompletionTokens = int(ct)
-			found = true
-		}
-		if tt, ok := u["total_tokens"].(float64); ok {
-			usage.TotalTokens = int(tt)
-			found = true
-		}
-	} else if um, ok := data["usageMetadata"].(map[string]any); ok {
-		if pt, ok := um["promptTokenCount"].(float64); ok {
-			usage.PromptTokens = int(pt)
-			found = true
-		}
-		if ct, ok := um["candidatesTokenCount"].(float64); ok {
-			usage.CompletionTokens = int(ct)
-			found = true
-		}
-		if tt, ok := um["totalTokenCount"].(float64); ok {
-			usage.TotalTokens = int(tt)
-			found = true
-		}
-	}
-	return usage, found
-}
-
 func (e *Engine) ProcessResponse(protocol, matchedID, apiName string, reqPayload []byte, respPayload []byte) {
 	if e.ActiveSuite == nil || matchedID == "" {
 		return
@@ -444,20 +394,7 @@ func (e *Engine) ProcessResponse(protocol, matchedID, apiName string, reqPayload
 		}
 
 		if usage, ok := parseUsage(respPayload); ok {
-			activeTest.mu.Lock()
-			if activeTest.APIUsage == nil {
-				activeTest.APIUsage = make(map[string]workspace.LLMUsage)
-			}
-			curr := activeTest.APIUsage[apiName]
-			curr.PromptTokens += usage.PromptTokens
-			curr.CompletionTokens += usage.CompletionTokens
-			curr.TotalTokens += usage.TotalTokens
-			activeTest.APIUsage[apiName] = curr
-
-			activeTest.TotalUsage.PromptTokens += usage.PromptTokens
-			activeTest.TotalUsage.CompletionTokens += usage.CompletionTokens
-			activeTest.TotalUsage.TotalTokens += usage.TotalTokens
-			activeTest.mu.Unlock()
+			addUsageToActiveTest(activeTest, apiName, usage)
 		}
 
 		if apiConfig.ExpectedResponse != nil && len(apiConfig.ExpectedResponse.Payload) > 0 {

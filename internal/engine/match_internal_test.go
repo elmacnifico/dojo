@@ -160,39 +160,110 @@ func TestParseUsage(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		payload  []byte
-		want     workspace.LLMUsage
+		name      string
+		payload   []byte
+		want      workspace.LLMUsage
 		wantFound bool
 	}{
 		{
-			name:     "OpenAI format",
-			payload:  []byte(`{"usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}}`),
-			want:     workspace.LLMUsage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30},
+			name:      "OpenAI format",
+			payload:   []byte(`{"usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}}`),
+			want:      workspace.LLMUsage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30},
 			wantFound: true,
 		},
 		{
-			name:     "Gemini format",
-			payload:  []byte(`{"usageMetadata": {"promptTokenCount": 15, "candidatesTokenCount": 25, "totalTokenCount": 40}}`),
-			want:     workspace.LLMUsage{PromptTokens: 15, CompletionTokens: 25, TotalTokens: 40},
+			name:      "Gemini format",
+			payload:   []byte(`{"usageMetadata": {"promptTokenCount": 15, "candidatesTokenCount": 25, "totalTokenCount": 40}}`),
+			want:      workspace.LLMUsage{PromptTokens: 15, CompletionTokens: 25, TotalTokens: 40},
 			wantFound: true,
 		},
 		{
-			name:     "No usage data",
-			payload:  []byte(`{"choices": [{"text": "hello"}]}`),
-			want:     workspace.LLMUsage{},
+			name:    "OpenAI with details",
+			payload: []byte(`{"usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120, "prompt_tokens_details": {"cached_tokens": 40, "audio_tokens": 3}, "completion_tokens_details": {"reasoning_tokens": 5, "audio_tokens": 2, "accepted_prediction_tokens": 1, "rejected_prediction_tokens": 2}}}`),
+			want: workspace.LLMUsage{
+				PromptTokens:               100,
+				CompletionTokens:           20,
+				TotalTokens:                120,
+				CachedPromptTokens:         40,
+				AudioPromptTokens:          3,
+				ReasoningTokens:            5,
+				AudioCompletionTokens:      2,
+				AcceptedPredictionTokens:   1,
+				RejectedPredictionTokens:   2,
+			},
+			wantFound: true,
+		},
+		{
+			name:      "OpenAI Responses-style usage",
+			payload:   []byte(`{"usage": {"input_tokens": 50, "output_tokens": 12}}`),
+			want:      workspace.LLMUsage{PromptTokens: 50, CompletionTokens: 12, TotalTokens: 62},
+			wantFound: true,
+		},
+		{
+			name:    "Anthropic with cache",
+			payload: []byte(`{"usage": {"input_tokens": 200, "output_tokens": 30, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 50}}`),
+			want: workspace.LLMUsage{
+				PromptTokens:               200,
+				CompletionTokens:           30,
+				TotalTokens:                230,
+				CacheCreationInputTokens:   100,
+				CacheReadInputTokens:       50,
+			},
+			wantFound: true,
+		},
+		{
+			name:    "Gemini extended",
+			payload: []byte(`{"usageMetadata": {"promptTokenCount": 80, "cachedContentTokenCount": 32, "candidatesTokenCount": 10, "toolUsePromptTokenCount": 7, "thoughtsTokenCount": 3, "totalTokenCount": 100}}`),
+			want: workspace.LLMUsage{
+				PromptTokens:          80,
+				CompletionTokens:      10,
+				TotalTokens:           100,
+				CachedPromptTokens:    32,
+				ToolUsePromptTokens:   7,
+				ThoughtsTokens:        3,
+			},
+			wantFound: true,
+		},
+		{
+			name:    "Gemini snake_case usageMetadata",
+			payload: []byte(`{"usageMetadata": {"prompt_token_count": 80, "cached_content_token_count": 25, "candidates_token_count": 12, "thoughts_token_count": 4}}`),
+			want: workspace.LLMUsage{
+				PromptTokens:       80,
+				CompletionTokens:   12,
+				CachedPromptTokens: 25,
+				ThoughtsTokens:     4,
+				TotalTokens:        92,
+			},
+			wantFound: true,
+		},
+		{
+			name:      "OpenAI prefers prompt_tokens over input_tokens",
+			payload:   []byte(`{"usage": {"prompt_tokens": 1, "input_tokens": 999}}`),
+			want:      workspace.LLMUsage{PromptTokens: 1, TotalTokens: 1},
+			wantFound: true,
+		},
+		{
+			name:      "Nested response.usage OpenAI",
+			payload:   []byte(`{"response": {"usage": {"prompt_tokens": 5, "completion_tokens": 6, "total_tokens": 11}}}`),
+			want:      workspace.LLMUsage{PromptTokens: 5, CompletionTokens: 6, TotalTokens: 11},
+			wantFound: true,
+		},
+		{
+			name:      "No usage data",
+			payload:   []byte(`{"choices": [{"text": "hello"}]}`),
+			want:      workspace.LLMUsage{},
 			wantFound: false,
 		},
 		{
-			name:     "Invalid JSON",
-			payload:  []byte(`{invalid`),
-			want:     workspace.LLMUsage{},
+			name:      "Invalid JSON",
+			payload:   []byte(`{invalid`),
+			want:      workspace.LLMUsage{},
 			wantFound: false,
 		},
 		{
-			name:     "Partial OpenAI format",
-			payload:  []byte(`{"usage": {"prompt_tokens": 10}}`),
-			want:     workspace.LLMUsage{PromptTokens: 10},
+			name:      "Partial OpenAI format",
+			payload:   []byte(`{"usage": {"prompt_tokens": 10}}`),
+			want:      workspace.LLMUsage{PromptTokens: 10, TotalTokens: 10},
 			wantFound: true,
 		},
 	}
