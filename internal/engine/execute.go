@@ -469,7 +469,10 @@ func (e *Engine) executePostgresPerform(ctx context.Context, active *ActiveTest,
 	}
 
 	if filepath.Ext(expectValue) != "" {
-		actual := rowsToJSON(rows)
+		actual, err := rowsToJSON(rows)
+		if err != nil {
+			return fmt.Errorf("reading postgres result rows: %w", err)
+		}
 		expected, err := workspace.ReadPlanFixture(testDir, suiteDir, expectValue)
 		if err != nil {
 			return fmt.Errorf("failed to read expect fixture %s: %w", expectValue, err)
@@ -492,6 +495,9 @@ func (e *Engine) executePostgresPerform(ctx context.Context, active *ActiveTest,
 	for rows.Next() {
 		actualCount++
 	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating result rows: %w", err)
+	}
 	if actualCount != expectedCount {
 		return &MismatchError{
 			Reason:   fmt.Sprintf("expected %d rows, got %d", expectedCount, actualCount),
@@ -502,17 +508,24 @@ func (e *Engine) executePostgresPerform(ctx context.Context, active *ActiveTest,
 	return nil
 }
 
-// rowsToJSON serializes SQL result rows as a JSON array of string-valued objects.
-func rowsToJSON(rows *sql.Rows) []byte {
-	cols, _ := rows.Columns()
+// rowsToJSON serializes SQL result rows as a JSON array of string-valued
+// objects. Scan errors are surfaced through the returned error so a corrupt
+// result set fails the test instead of silently producing partial JSON.
+func rowsToJSON(rows *sql.Rows) ([]byte, error) {
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("reading result columns: %w", err)
+	}
 	var results []map[string]string
 	for rows.Next() {
 		vals := make([]sql.NullString, len(cols))
-		ptrs := make([]interface{}, len(cols))
+		ptrs := make([]any, len(cols))
 		for i := range vals {
 			ptrs[i] = &vals[i]
 		}
-		rows.Scan(ptrs...)
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, fmt.Errorf("scanning result row: %w", err)
+		}
 		row := make(map[string]string, len(cols))
 		for i, col := range cols {
 			if vals[i].Valid {
@@ -521,11 +534,17 @@ func rowsToJSON(rows *sql.Rows) []byte {
 		}
 		results = append(results, row)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating result rows: %w", err)
+	}
 	if results == nil {
 		results = []map[string]string{}
 	}
-	b, _ := json.Marshal(results)
-	return b
+	b, err := json.Marshal(results)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling result rows: %w", err)
+	}
+	return b, nil
 }
 
 func (e *Engine) checkSeedRequiresLiveDB(seedDir string, hasLiveDB bool) error {

@@ -327,7 +327,7 @@ finishes (all `Expect` lines for the HTTP trigger are satisfied, then any
   **no** `Expect` lines in a wait phase (only the wait line for that phase).
   The pause respects test cancellation (`context`).
 
-### Request Matching: Normalized Full Equality
+### Request Matching: Normalized Containment
 
 Dojo correlates intercepted SUT traffic to active tests using **normalized
 matching** between the resolved expected request fixture and the actual payload
@@ -731,6 +731,10 @@ machine-readable artifacts:
 
 Use `--format json` for a single JSON blob on stdout, or `--format jsonl` to
 stream one JSON object per test result as it completes.
+
+Payload mismatches populate `expected`, `actual`, and a unified line `diff`
+(`-` for expected-only lines, `+` for actual-only lines) on the failure entry,
+capped at 40 lines, so CI logs and agents can triage failures without re-running.
 
 If the SUT process crashes (exit code != 0), Dojo propagates the error to all
 in-flight tests and reports each as failed with the crash reason.

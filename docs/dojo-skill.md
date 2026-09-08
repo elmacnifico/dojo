@@ -666,9 +666,10 @@ fields in the actual payload are silently ignored at every nesting level.
   same index; the expected array can be shorter than actual. Scalar values must
   be equal. If either payload is not valid JSON, Dojo falls back to
   whitespace-normalized substring matching.
-- **SQL:** Collapse all whitespace to single spaces, strip trailing `;`, then
-  check that the normalized expected string is contained in the normalized
-  actual query.
+- **SQL:** Collapse whitespace outside string literals to single spaces,
+  strip one trailing `;`, then check that the normalized expected string is
+  contained in the normalized actual query. Whitespace inside SQL string
+  literals is significant: `'foo  bar'` never matches `'foo bar'`.
 
 This means fixture files only need to specify the fields the test cares about.
 A fixture that specifies every field still works identically (it is trivially
