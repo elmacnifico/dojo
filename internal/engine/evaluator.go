@@ -10,16 +10,24 @@ import (
 	"os"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/elmacnifico/dojo/internal/workspace"
 	"github.com/elmacnifico/dojo/pkg/dojo"
 )
+
+// evalMaxAttempts is how many times the evaluator retries a transient
+// provider failure (transport error, 429, 5xx).
+const evalMaxAttempts = 3
 
 // AIEvaluator implements dojo.Evaluator using generative AI.
 type AIEvaluator struct {
 	config *workspace.EvaluatorConfig
 	tmpl   *template.Template
 	client *http.Client
+	// attemptTimeout bounds each individual provider call (per attempt,
+	// not shared across retries). Zero disables per-attempt bounding.
+	attemptTimeout time.Duration
 }
 
 // evaluatorPromptTemplate is the fixed prompt the engine sends to the
@@ -32,8 +40,11 @@ type evalData struct {
 	ActualPayload string
 }
 
-// NewAIEvaluator initializes an AIEvaluator.
-func NewAIEvaluator(config *workspace.EvaluatorConfig, promptTemplate string) (*AIEvaluator, error) {
+// NewAIEvaluator initializes an AIEvaluator. attemptTimeout bounds each
+// individual provider call (retries get a fresh budget each); zero or a
+// negative value disables per-attempt bounding and leaves only the caller's
+// context deadline in force.
+func NewAIEvaluator(config *workspace.EvaluatorConfig, promptTemplate string, attemptTimeout time.Duration) (*AIEvaluator, error) {
 	if config == nil {
 		return nil, fmt.Errorf("evaluator config cannot be nil")
 	}
@@ -43,9 +54,10 @@ func NewAIEvaluator(config *workspace.EvaluatorConfig, promptTemplate string) (*
 	}
 
 	return &AIEvaluator{
-		config: config,
-		tmpl:   tmpl,
-		client: &http.Client{},
+		config:         config,
+		tmpl:           tmpl,
+		client:         &http.Client{},
+		attemptTimeout: attemptTimeout,
 	}, nil
 }
 
@@ -68,37 +80,55 @@ func (a *AIEvaluator) Evaluate(ctx context.Context, actual []byte, expectedRule 
 
 	var responseText string
 
-	switch strings.ToLower(a.config.Provider) {
-	case "openai":
-		responseText, err = a.callOpenAI(ctx, prompt, apiKey)
-	case "anthropic":
-		responseText, err = a.callAnthropic(ctx, prompt, apiKey)
-	case "gemini":
-		responseText, err = a.callGemini(ctx, prompt, apiKey)
-	default:
-		return dojo.EvaluatorResult{}, fmt.Errorf("unsupported AI provider: %s", a.config.Provider)
-	}
-
-	if err != nil {
-		return dojo.EvaluatorResult{}, fmt.Errorf("ai generation failed: %w", err)
-	}
-
-	rawJSON := strings.TrimSpace(responseText)
-	if strings.HasPrefix(rawJSON, "```json") {
-		rawJSON = strings.TrimPrefix(rawJSON, "```json")
-		rawJSON = strings.TrimSuffix(rawJSON, "```")
-	} else if strings.HasPrefix(rawJSON, "```") {
-		rawJSON = strings.TrimPrefix(rawJSON, "```")
-		rawJSON = strings.TrimSuffix(rawJSON, "```")
-	}
-	rawJSON = strings.TrimSpace(rawJSON)
-
+	// Generation + parse loop: retry once when the judge model wraps its
+	// JSON in prose (or emits malformed JSON). The next attempt usually
+	// produces clean output; a second parse failure is deterministic
+	// enough to surface as an error.
 	var result dojo.EvaluatorResult
-	if err := json.Unmarshal([]byte(rawJSON), &result); err != nil {
-		return dojo.EvaluatorResult{}, fmt.Errorf("failed to parse ai response as json: %w\nRaw Output: %s", err, rawJSON)
+	var lastParseErr error
+	for genAttempt := 1; genAttempt <= evalMaxAttempts; genAttempt++ {
+		switch strings.ToLower(a.config.Provider) {
+		case "openai":
+			responseText, err = a.callOpenAI(ctx, prompt, apiKey)
+		case "anthropic":
+			responseText, err = a.callAnthropic(ctx, prompt, apiKey)
+		case "gemini":
+			responseText, err = a.callGemini(ctx, prompt, apiKey)
+		default:
+			return dojo.EvaluatorResult{}, fmt.Errorf("unsupported AI provider: %s", a.config.Provider)
+		}
+
+		if err != nil {
+			return dojo.EvaluatorResult{}, fmt.Errorf("ai generation failed: %w", err)
+		}
+
+		rawJSON := strings.TrimSpace(responseText)
+		if strings.HasPrefix(rawJSON, "```json") {
+			rawJSON = strings.TrimPrefix(rawJSON, "```json")
+			rawJSON = strings.TrimSuffix(rawJSON, "```")
+		} else if strings.HasPrefix(rawJSON, "```") {
+			rawJSON = strings.TrimPrefix(rawJSON, "```")
+			rawJSON = strings.TrimSuffix(rawJSON, "```")
+		}
+		rawJSON = strings.TrimSpace(rawJSON)
+
+		if unmarshalErr := json.Unmarshal([]byte(rawJSON), &result); unmarshalErr == nil {
+			return result, nil
+		} else {
+			lastParseErr = unmarshalErr
+			if genAttempt == evalMaxAttempts || ctx.Err() != nil {
+				break
+			}
+			// Brief pause before the retry generation.
+			select {
+			case <-time.After(time.Second):
+			case <-ctx.Done():
+				break
+			}
+		}
 	}
 
-	return result, nil
+	return dojo.EvaluatorResult{}, fmt.Errorf("failed to parse ai response as json: %w\nRaw Output: %s", lastParseErr, responseText)
 }
 
 // llmRequest holds the parameters needed to make a provider-specific LLM API call.
@@ -110,7 +140,12 @@ type llmRequest struct {
 	extractText func(body []byte) (string, error)
 }
 
-// doLLMRequest executes a provider-agnostic LLM HTTP call.
+// doLLMRequest executes a provider-agnostic LLM HTTP call with retries.
+// Transient failures (transport errors, 429, 5xx) are retried up to
+// evalMaxAttempts times with exponential backoff; deterministic failures
+// (other 4xx, decode errors) fail immediately. Each attempt gets a fresh
+// per-call timeout derived from the parent context so one slow attempt
+// does not consume the budget of the retries after it.
 func (a *AIEvaluator) doLLMRequest(ctx context.Context, r llmRequest) (string, error) {
 	b, err := json.Marshal(r.body)
 	if err != nil {
@@ -122,29 +157,73 @@ func (a *AIEvaluator) doLLMRequest(ctx context.Context, r llmRequest) (string, e
 		reqURL = r.defaultURL
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(b))
+	var lastErr error
+	for attempt := 1; attempt <= evalMaxAttempts; attempt++ {
+		// Fresh per-attempt timeout: the engine-level deadline (timeouts.
+		// ai_evaluator) bounds the whole evaluation, but a single hung
+		// attempt must not starve its own retries. The parent context
+		// still enforces the hard cap.
+		attemptCtx := ctx
+		if a.attemptTimeout > 0 {
+			var cancel context.CancelFunc
+			attemptCtx, cancel = context.WithTimeout(ctx, a.attemptTimeout)
+			defer cancel()
+		}
+
+		text, retryable, err := a.doLLMAttempt(attemptCtx, reqURL, b, r)
+		if err == nil {
+			return text, nil
+		}
+		lastErr = err
+		if !retryable || attempt == evalMaxAttempts || ctx.Err() != nil {
+			return "", err
+		}
+		// Exponential backoff: 1s, 2s, ... (attempt 1 waits 1s before
+		// attempt 2, attempt 2 waits 2s before attempt 3).
+		select {
+		case <-time.After(time.Duration(attempt) * time.Second):
+		case <-ctx.Done():
+			return "", lastErr
+		}
+	}
+	return "", lastErr
+}
+
+// doLLMAttempt performs one HTTP attempt. retryable reports whether the
+// failure is transient (transport error, 429, 5xx) and worth retrying.
+func (a *AIEvaluator) doLLMAttempt(ctx context.Context, reqURL string, body []byte, r llmRequest) (text string, retryable bool, err error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("build %s request: %w", r.provider, err)
+		return "", false, fmt.Errorf("build %s request: %w", r.provider, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	r.setAuth(req)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("%s request failed: %w", r.provider, err)
+		// Transport errors (timeouts, connection resets) are transient.
+		return "", true, fmt.Errorf("%s request failed: %w", r.provider, err)
 	}
 	defer resp.Body.Close()
 
 	respBody, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
-		return "", fmt.Errorf("%s error reading body: %w", r.provider, readErr)
+		return "", true, fmt.Errorf("%s error reading body: %w", r.provider, readErr)
 	}
 
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+		return "", true, fmt.Errorf("%s error %d: %s", r.provider, resp.StatusCode, string(respBody))
+	}
 	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("%s error %d: %s", r.provider, resp.StatusCode, string(respBody))
+		return "", false, fmt.Errorf("%s error %d: %s", r.provider, resp.StatusCode, string(respBody))
 	}
 
-	return r.extractText(respBody)
+	text, err = r.extractText(respBody)
+	if err != nil {
+		// A malformed success response is deterministic; do not retry.
+		return "", false, err
+	}
+	return text, false, nil
 }
 
 func (a *AIEvaluator) callOpenAI(ctx context.Context, prompt, apiKey string) (string, error) {

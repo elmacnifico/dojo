@@ -275,6 +275,15 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte, req
 		exps := activeTest.Expectations[apiName]
 		exp := exps[matchedIdx]
 
+		// Track in-flight live requests for eval expectations: the
+		// quiet-window finalization must not fire while a round's upstream
+		// response is still pending. Applies to every eval expectation on a
+		// live API — with or without MaxCalls — because models may split a
+		// logical hop into multiple rounds either way.
+		if exp.RequiresEval && apiConfig.Mode == "live" {
+			activeTest.BeginLiveRequest(apiName, matchedIdx)
+		}
+
 		if exp.RequiresEval && apiConfig.Mode != "live" {
 			go func(at *ActiveTest, api string, idx int, payload []byte) {
 				var evalErr error
@@ -429,14 +438,20 @@ func (e *Engine) ProcessResponse(protocol, matchedID, apiName string, reqPayload
 			// call; a quiet window after the last response (no further
 			// rounds) evaluates the stored final payload; the deadline
 			// handler is the final backstop.
+			drained := activeTest.EndLiveRequest(apiName, unfulfilled.Index)
 			_, readyNow, gen := activeTest.RecordLiveResponse(apiName, unfulfilled.Index, respPayload)
 			if readyNow {
 				payloadCopy := make([]byte, len(respPayload))
 				copy(payloadCopy, respPayload)
 				go e.evalAndMark(activeTest, apiName, unfulfilled.Index, payloadCopy)
-			} else {
+			} else if drained {
+				// No requests in flight: safe to start the quiet window for
+				// this response. If another round is already in flight the
+				// count guards the claim, and its response re-arms a newer
+				// window.
 				e.armQuietEvaluation(activeTest, apiName, unfulfilled.Index, gen)
-			}		}
+			}
+		}
 	}
 }
 
@@ -452,32 +467,48 @@ func (e *Engine) evalAndMark(activeTest *ActiveTest, apiName string, idx int, pa
 	activeTest.MarkFulfilled(apiName, idx, checkErr)
 }
 
-// quietEvalWindow is how long the engine waits, after the most recent live
-// response of a multi-round flow, before deciding the flow has ended and
-// grading the stored final payload. Round gaps in tool loops are sub-second
-// to a few seconds on slow reasoning models (the SUT fires the next request
-// as soon as a response arrives), so ~8s of silence reliably indicates
-// end-of-flow while keeping tests fast.
+// quietEvalWindow is the fallback end-of-flow quiet window used when a suite
+// does not configure timeouts.eval_quiet_window (see armQuietEvaluation).
+// Round gaps in tool loops are sub-second to a few seconds on slow reasoning
+// models (the SUT fires the next request as soon as a response arrives), so
+// ~8s of silence reliably indicates end-of-flow while keeping tests fast.
 const quietEvalWindow = 8 * time.Second
 
 // armQuietEvaluation schedules end-of-flow evaluation for a multi-round live
 // expectation. Each call supersedes previous timers for the same expectation
 // via the LiveResponseGen guard: only the timer armed for the NEWEST response
 // survives to claim the final evaluation. When the window passes with no
-// further rounds, the stored last response is graded.
+// further rounds, the stored last response is graded. The window length is
+// the suite's timeouts.eval_quiet_window (default 8s; floor 2s) — raise it
+// for slow reasoning models whose inter-round gaps can exceed the default.
 func (e *Engine) armQuietEvaluation(activeTest *ActiveTest, apiName string, idx int, gen int) {
+	window := quietEvalWindow
+	if activeTest != nil && activeTest.Suite != nil && activeTest.Suite.Config.Timeouts.EvalQuietWindow.Duration > 0 {
+		window = activeTest.Suite.Config.Timeouts.EvalQuietWindow.Duration
+	}
 	go func() {
-		timer := time.NewTimer(quietEvalWindow)
+		timer := time.NewTimer(window)
 		defer timer.Stop()
+		var done <-chan struct{}
+		if activeTest != nil && activeTest.done != nil {
+			done = activeTest.done
+		}
+		var ctxDone <-chan struct{}
+		if activeTest != nil && activeTest.Ctx != nil {
+			ctxDone = activeTest.Ctx.Done()
+		}
 		select {
 		case <-timer.C:
+			if activeTest == nil {
+				return
+			}
 			payload, ok := activeTest.ClaimFinalEvaluation(apiName, idx, gen)
 			if !ok {
 				return // newer response arrived; its timer owns the payload
 			}
 			e.evalAndMark(activeTest, apiName, idx, payload)
-		case <-activeTest.done:
-		case <-activeTest.Ctx.Done():
+		case <-done:
+		case <-ctxDone:
 		}
 	}()
 }

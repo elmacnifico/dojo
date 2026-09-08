@@ -284,7 +284,7 @@ func (e *Engine) awaitPhaseExpectations(ctx context.Context, active *ActiveTest)
 					// the stored final response instead of failing. The
 					// evalDeadline path fulfills (or fails) the expectation
 					// with the real verdict.
-					if exp.MaxCalls > 1 && exp.RequiresEval {
+					if exp.RequiresEval {
 						if lastPayload, ok := active.FinalLiveResponse(apiName, exp.Index); ok {
 							e.evalDeadline(exp, apiName, active, lastPayload)
 							return
@@ -575,10 +575,17 @@ func (e *Engine) Evaluate(activeTest *ActiveTest, payload []byte) error {
 	}
 
 	// Build the evaluator once per engine; the parsed prompt template and
-	// HTTP client are reused across every Evaluate Response clause.
+	// HTTP client are reused across every Evaluate Response clause. The
+	// ai_evaluator timeout bounds each provider attempt — retried attempts
+	// get a fresh budget, and the per-test context below still caps the
+	// whole evaluation.
 	e.evaluatorMu.Lock()
 	if e.evaluator == nil {
-		ev, err := NewAIEvaluator(cfg, evaluatorPromptTemplate)
+		attemptTimeout := activeTest.Suite.Config.Timeouts.AIEvaluator.Duration
+		if attemptTimeout <= 0 {
+			attemptTimeout = workspace.DefaultAIEvaluator
+		}
+		ev, err := NewAIEvaluator(cfg, evaluatorPromptTemplate, attemptTimeout)
 		if err != nil {
 			e.evaluatorMu.Unlock()
 			return fmt.Errorf("creating evaluator: %w", err)

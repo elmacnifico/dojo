@@ -133,6 +133,10 @@ const (
 	DefaultPerform         = 5 * time.Second
 	DefaultExpect          = 2 * time.Second
 	DefaultAIEvaluator     = 30 * time.Second
+	// DefaultEvalQuietWindow is how long the engine waits, after the most
+	// recent live response of a multi-round flow, before deciding the flow
+	// has ended and grading the stored final payload (see match.go).
+	DefaultEvalQuietWindow = 8 * time.Second
 )
 
 // TimeoutConfig holds configurable timeout durations for the engine.
@@ -144,6 +148,11 @@ type TimeoutConfig struct {
 	Perform         Duration `json:"perform,omitempty" yaml:"perform,omitempty"`
 	Expect          Duration `json:"expect,omitempty" yaml:"expect,omitempty"`
 	AIEvaluator     Duration `json:"ai_evaluator,omitempty" yaml:"ai_evaluator,omitempty"`
+	// EvalQuietWindow is the end-of-flow quiet window for deferred
+	// evaluation of live multi-round flows (Evaluate Response without a
+	// consumed MaxCalls budget). Raise it for slow reasoning models whose
+	// inter-round gaps can exceed the default.
+	EvalQuietWindow Duration `json:"eval_quiet_window,omitempty" yaml:"eval_quiet_window,omitempty"`
 }
 
 // ResolveDefaults fills zero-valued fields with sensible defaults.
@@ -168,6 +177,11 @@ func (tc *TimeoutConfig) ResolveDefaults() {
 	}
 	if tc.AIEvaluator.Duration == 0 {
 		tc.AIEvaluator.Duration = DefaultAIEvaluator
+	}
+	if tc.EvalQuietWindow.Duration < 2*time.Second {
+		// Floor at 2s: a window shorter than a round-trip would grade
+		// mid-flow payloads as final and fail evaluation spuriously.
+		tc.EvalQuietWindow.Duration = DefaultEvalQuietWindow
 	}
 }
 
