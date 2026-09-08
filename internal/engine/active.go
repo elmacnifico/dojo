@@ -28,6 +28,7 @@ type Expectation struct {
 	// the expectation deadline expires with fewer calls than budgeted.
 	LastLiveResponse []byte
 	LiveResponseGen int // bumped on every recorded response; guards quiet timers
+	InFlight        int // matched requests awaiting their live upstream response
 }
 
 // ActiveTest represents a currently executing test within the Suite.
@@ -158,12 +159,51 @@ func (a *ActiveTest) RecordLiveResponse(apiName string, idx int, payload []byte)
 	gen = exp.LiveResponseGen
 
 	if exp.MaxCalls <= 1 {
-		return exp, true, gen
+		// Single-call budget: still defer to the quiet window. Models may
+		// split what the suite treats as one hop into multiple rounds
+		// (e.g. think_and_plan round, then finalize_intent round) even
+		// without a MaxCalls declaration; grading round 1 would fail
+		// spuriously. The quiet window evaluates the LAST round's payload.
+		// (Return readyNow only when the budget is truly consumed by an
+		// explicit multi-call declaration, below.)
+		return exp, false, gen
 	}
 	// Multi-round: evaluate only when this response is at the last allowed
 	// call. MatchCount increments on evaluation (MarkFulfilled), so the
 	// budget check uses MatchCount+1 — the call this response belongs to.
 	return exp, exp.MatchCount+1 >= exp.MaxCalls, gen
+}
+
+// BeginLiveRequest records that a matched request for a live multi-round
+// expectation is in flight (sent upstream, response pending). The quiet-window
+// evaluation must not fire while requests are in flight: under load, a round's
+// upstream latency can exceed the quiet window and would otherwise grade a
+// mid-flow payload as final.
+func (a *ActiveTest) BeginLiveRequest(apiName string, idx int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	exps := a.Expectations[apiName]
+	if idx < 0 || idx >= len(exps) {
+		return
+	}
+	exps[idx].InFlight++
+}
+
+// EndLiveRequest decrements the in-flight count for a live expectation. It
+// reports whether the count reached zero, so the caller can re-arm the quiet
+// window for the just-arrived response (the previous timer's gen guard makes
+// stale timers harmless).
+func (a *ActiveTest) EndLiveRequest(apiName string, idx int) (drained bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	exps := a.Expectations[apiName]
+	if idx < 0 || idx >= len(exps) {
+		return false
+	}
+	if exps[idx].InFlight > 0 {
+		exps[idx].InFlight--
+	}
+	return exps[idx].InFlight == 0
 }
 
 // ClaimFinalEvaluation atomically claims the right to run the final AI
@@ -181,6 +221,12 @@ func (a *ActiveTest) ClaimFinalEvaluation(apiName string, idx int, gen int) (pay
 	}
 	exp := exps[idx]
 	if exp.Fulfilled || exp.LiveResponseGen != gen || len(exp.LastLiveResponse) == 0 {
+		return nil, false
+	}
+	if exp.InFlight > 0 {
+		// A request is still awaiting its upstream response: the flow may
+		// continue. A newer response will arm a fresh quiet window when it
+		// arrives; this timer stands down without claiming.
 		return nil, false
 	}
 	payloadCopy := make([]byte, len(exp.LastLiveResponse))
@@ -201,12 +247,30 @@ func (a *ActiveTest) FinalLiveResponse(apiName string, idx int) ([]byte, bool) {
 		return nil, false
 	}
 	exp := exps[idx]
-	if len(exp.LastLiveResponse) == 0 {
+	if len(exp.LastLiveResponse) == 0 || exp.InFlight > 0 {
 		return nil, false
 	}
 	payloadCopy := make([]byte, len(exp.LastLiveResponse))
 	copy(payloadCopy, exp.LastLiveResponse)
 	return payloadCopy, true
+}
+
+// ExpectationSnapshot returns a copy of the expectation state (Fulfilled,
+// Error, MatchCount) for the given API and index, taken under a.mu. Tests
+// (and callers outside the engine) must poll expectation state through this
+// accessor rather than reading the Expectations map directly: MarkFulfilled
+// writes these fields from proxy and quiet-window goroutines, and an
+// unsynchronized read is a data race even when the value read is "stale but
+// harmless".
+func (a *ActiveTest) ExpectationSnapshot(apiName string, idx int) (fulfilled bool, err error, matchCount int, ok bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	exps := a.Expectations[apiName]
+	if idx < 0 || idx >= len(exps) {
+		return false, nil, 0, false
+	}
+	exp := exps[idx]
+	return exp.Fulfilled, exp.Error, exp.MatchCount, true
 }
 
 // buildExpectations populates at.Expectations from parsed Expect lines. Each

@@ -1455,16 +1455,28 @@ func TestProcessResponse_HTTPLiveEvalFailsWithoutConfig(t *testing.T) {
 
 	eng.ProcessResponse("http", "t1", "gemini", nil, []byte(`{"candidates":[{"content":"response"}]}`))
 
-	// Wait for async evalAndMark to complete
-	time.Sleep(100 * time.Millisecond)
-
-	if !active.Expectations["gemini"][0].Fulfilled {
-		t.Error("expected gemini expectation to be marked fulfilled (done)")
+	// The live-eval path defers evaluation to the end-of-flow quiet window
+	// (models may split a logical hop into several rounds). Poll the
+	// synchronized snapshot until the quiet window elapses and the deferred
+	// evaluation settles. Reading the Expectations map directly would race
+	// with MarkFulfilled (called from the quiet-window goroutine).
+	deadline := time.Now().Add(10 * time.Second)
+	fulfilled := false
+	for time.Now().Before(deadline) {
+		fulfilled, _, _, _ = active.ExpectationSnapshot("gemini", 0)
+		if fulfilled {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	if active.Expectations["gemini"][0].Error == nil {
+	if !fulfilled {
+		t.Fatal("expected gemini expectation to be marked fulfilled (done)")
+	}
+	_, evalErr, _, _ := active.ExpectationSnapshot("gemini", 0)
+	if evalErr == nil {
 		t.Fatal("expected non-nil error because evaluator config is missing")
 	}
-	if got := active.Expectations["gemini"][0].Error.Error(); !strings.Contains(got, "no eval.md rule found") {
+	if got := evalErr.Error(); !strings.Contains(got, "no eval.md rule found") {
 		t.Errorf("unexpected error message: %s", got)
 	}
 }
