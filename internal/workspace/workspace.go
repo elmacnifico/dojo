@@ -87,8 +87,8 @@ func (e EntrypointConfig) HTTPMethod() string {
 
 // EvaluatorConfig holds the rules for AI evaluation.
 type EvaluatorConfig struct {
-	Provider  string `json:"provider" yaml:"provider"`           // "gemini", "openai", "anthropic"
-	Model     string `json:"model" yaml:"model"`                 // e.g., "gemini-1.5-flash", "gpt-4"
+	Provider  string `json:"provider" yaml:"provider"`           // "gemini", "openai", "anthropic", "melious"
+	Model     string `json:"model" yaml:"model"`                 // e.g., "gemini-1.5-flash", "gpt-4", "gpt-oss-120b"
 	APIKeyEnv string `json:"api_key_env" yaml:"api_key_env"`     // e.g., "GEMINI_API_KEY"
 	URL       string `json:"url,omitempty" yaml:"url,omitempty"` // For custom/local endpoints
 }
@@ -810,9 +810,9 @@ func validateSuiteConfig(suiteName string, cfg *DojoConfig) error {
 
 	if eval := cfg.Evaluator; eval != nil {
 		switch strings.ToLower(eval.Provider) {
-		case "gemini", "openai", "anthropic":
+		case "gemini", "openai", "anthropic", "melious":
 		default:
-			return fmt.Errorf("suite %s: evaluator provider must be one of gemini, openai, anthropic; got %q", suiteName, eval.Provider)
+			return fmt.Errorf("suite %s: evaluator provider must be one of gemini, openai, anthropic, melious; got %q", suiteName, eval.Provider)
 		}
 		if eval.Model == "" {
 			return fmt.Errorf("suite %s: evaluator model must not be empty", suiteName)

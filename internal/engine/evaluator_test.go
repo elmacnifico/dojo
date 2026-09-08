@@ -43,6 +43,19 @@ func TestAIEvaluator(t *testing.T) {
 			expectedReason: "matches perfectly",
 		},
 		{
+			name:     "Valid JSON passing Melious",
+			provider: "melious",
+			mockResp: `{
+				"choices": [{
+					"message": {
+						"content": "{\"pass\": true, \"reason\": \"sovereign match\"}"
+					}
+				}]
+			}`,
+			expectedPass:   true,
+			expectedReason: "sovereign match",
+		},
+		{
 			name:     "Valid JSON failing Gemini",
 			provider: "gemini",
 			mockResp: `{

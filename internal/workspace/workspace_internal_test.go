@@ -467,6 +467,22 @@ func TestValidateSuiteConfig(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "evaluator valid melious",
+			cfg: DojoConfig{
+				Concurrency: 1,
+				Evaluator:   &EvaluatorConfig{Provider: "melious", Model: "gpt-oss-120b", APIKeyEnv: "MELIOUS_API_KEY"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "evaluator valid melious case-insensitive",
+			cfg: DojoConfig{
+				Concurrency: 1,
+				Evaluator:   &EvaluatorConfig{Provider: "Melious", Model: "gpt-oss-120b", APIKeyEnv: "MELIOUS_API_KEY"},
+			},
+			wantErr: false,
+		},
+		{
 			name: "negative timeout",
 			cfg: DojoConfig{
 				Concurrency: 1,

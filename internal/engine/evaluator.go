@@ -87,16 +87,18 @@ func (a *AIEvaluator) Evaluate(ctx context.Context, actual []byte, expectedRule 
 	var result dojo.EvaluatorResult
 	var lastParseErr error
 	for genAttempt := 1; genAttempt <= evalMaxAttempts; genAttempt++ {
-		switch strings.ToLower(a.config.Provider) {
-		case "openai":
-			responseText, err = a.callOpenAI(ctx, prompt, apiKey)
-		case "anthropic":
-			responseText, err = a.callAnthropic(ctx, prompt, apiKey)
-		case "gemini":
-			responseText, err = a.callGemini(ctx, prompt, apiKey)
-		default:
-			return dojo.EvaluatorResult{}, fmt.Errorf("unsupported AI provider: %s", a.config.Provider)
-		}
+	switch strings.ToLower(a.config.Provider) {
+	case "openai":
+		responseText, err = a.callOpenAI(ctx, prompt, apiKey)
+	case "anthropic":
+		responseText, err = a.callAnthropic(ctx, prompt, apiKey)
+	case "gemini":
+		responseText, err = a.callGemini(ctx, prompt, apiKey)
+	case "melious":
+		responseText, err = a.callMelious(ctx, prompt, apiKey)
+	default:
+		return dojo.EvaluatorResult{}, fmt.Errorf("unsupported AI provider: %s", a.config.Provider)
+	}
 
 		if err != nil {
 			return dojo.EvaluatorResult{}, fmt.Errorf("ai generation failed: %w", err)
@@ -252,6 +254,42 @@ func (a *AIEvaluator) callOpenAI(ctx context.Context, prompt, apiKey string) (st
 			}
 			if len(res.Choices) == 0 {
 				return "", fmt.Errorf("empty response from openai")
+			}
+			return res.Choices[0].Message.Content, nil
+		},
+	})
+}
+
+// callMelious calls the Melious sovereign AI platform. Melious exposes an
+// OpenAI-compatible chat completions API (base URL https://api.melious.ai/v1)
+// over 60+ open-weight models hosted on EU infrastructure, so the wire
+// format and response shape are identical to OpenAI.
+func (a *AIEvaluator) callMelious(ctx context.Context, prompt, apiKey string) (string, error) {
+	return a.doLLMRequest(ctx, llmRequest{
+		provider:   "melious",
+		defaultURL: "https://api.melious.ai/v1/chat/completions",
+		body: map[string]any{
+			"model": a.config.Model,
+			"messages": []map[string]string{
+				{"role": "user", "content": prompt},
+			},
+		},
+		setAuth: func(req *http.Request) {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		},
+		extractText: func(body []byte) (string, error) {
+			var res struct {
+				Choices []struct {
+					Message struct {
+						Content string `json:"content"`
+					} `json:"message"`
+				} `json:"choices"`
+			}
+			if err := json.Unmarshal(body, &res); err != nil {
+				return "", fmt.Errorf("decode melious response: %w", err)
+			}
+			if len(res.Choices) == 0 {
+				return "", fmt.Errorf("empty response from melious")
 			}
 			return res.Choices[0].Message.Content, nil
 		},

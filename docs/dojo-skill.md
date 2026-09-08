@@ -106,7 +106,7 @@ evaluator:
   api_key_env: GEMINI_API_KEY
 ```
 
-Supported providers: `gemini`, `openai`, `anthropic`.
+Supported providers: `gemini`, `openai`, `anthropic`, `melious` (sovereign EU, OpenAI-compatible; default base URL `https://api.melious.ai/v1`).
 
 ### Timeouts (optional, Go duration strings)
 

@@ -443,6 +443,32 @@ Do not fail the test due to varying timestamps or unique IDs.
 A test `eval.md` whose content starts with `+` appends to the suite-level eval
 rather than replacing it.
 
+#### Evaluator configuration
+
+The judge LLM is configured in `dojo.yaml` under the `evaluator` key:
+
+```yaml
+evaluator:
+  provider: gemini          # gemini | openai | anthropic | melious
+  model: gemini-2.5-flash
+  api_key_env: GEMINI_API_KEY
+  # url: https://custom-endpoint.example/v1/chat/completions  # optional override
+```
+
+Supported providers:
+
+| Provider    | Wire format            | Default base URL                            | Notes                                             |
+| ----------- | ---------------------- | ------------------------------------------- | ------------------------------------------------- |
+| `gemini`    | Gemini `generateContent` | `https://generativelanguage.googleapis.com` | API key via `?key=` query parameter.              |
+| `openai`    | OpenAI Chat Completions | `https://api.openai.com/v1`               | Bearer auth.                                      |
+| `anthropic` | Anthropic Messages      | `https://api.anthropic.com`               | `x-api-key` header.                               |
+| `melious`   | OpenAI-compatible       | `https://api.melious.ai/v1`              | Sovereign EU platform; 60+ open-weight models, Bearer auth. |
+
+Any provider with an OpenAI-compatible endpoint can also be used via
+`provider: openai` plus a custom `url` (or `provider: anthropic` for
+Anthropic-compatible gateways); the dedicated `melious` provider simply wires
+the base URL for you.
+
 ---
 
 ### Timeouts
