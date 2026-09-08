@@ -776,6 +776,34 @@ func TestNormalizeSQL(t *testing.T) {
 	}
 }
 
+func TestNormalizeSQL_PreservesStringLiterals(t *testing.T) {
+	t.Parallel()
+	// Whitespace inside SQL string literals is significant: collapsing it
+	// would let 'foo  bar' match 'foo bar' and corrupt exact comparisons.
+	got := NormalizeSQL("SELECT * FROM t WHERE msg = 'hello   world'")
+	want := "SELECT * FROM t WHERE msg = 'hello   world'"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestNormalizeSQL_EscapedQuotesAndDollarQuoted(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ in, want string }{
+		// escaped quote inside a literal must not terminate the literal
+		{`WHERE n = 'it''s'`, `WHERE n = 'it''s'`},
+		// dollar-quoted literal with internal newlines must be preserved verbatim
+		{"SELECT $BODY$\n  a   b\n$BODY$", "SELECT $BODY$\n  a   b\n$BODY$"},
+		// trailing whitespace *outside* literals still collapses
+		{"SELECT  1   ,   2", "SELECT 1 , 2"},
+	}
+	for _, c := range cases {
+		if got := NormalizeSQL(c.in); got != c.want {
+			t.Errorf("NormalizeSQL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestNormalizeHTTPBody_CanonicalJSON(t *testing.T) {
 	t.Parallel()
 	a := NormalizeHTTPBody([]byte(`{"b":2,"a":1}`))

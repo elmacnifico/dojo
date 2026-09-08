@@ -16,11 +16,105 @@ func NormalizePayloadForMatch(protocol string, payload []byte) string {
 	return NormalizeHTTPBody(payload)
 }
 
-// NormalizeSQL collapses whitespace and strips a trailing semicolon for stable comparison.
+// NormalizeSQL collapses whitespace and strips a trailing semicolon for stable
+// comparison. Whitespace inside SQL string literals ('...'), quoted identifiers
+// ("..."), and dollar-quoted bodies ($tag$...$tag$) is preserved verbatim so
+// literals like 'foo  bar' can never collapse-match 'foo bar'.
 func NormalizeSQL(s string) string {
 	s = strings.TrimSpace(s)
-	s = strings.TrimSuffix(s, ";")
-	return strings.Join(strings.Fields(s), " ")
+	// Strip one trailing semicolon, tolerating surrounding whitespace.
+	if strings.HasSuffix(s, ";") {
+		s = strings.TrimSuffix(s, ";")
+	}
+	s = strings.TrimSpace(s)
+
+	var b strings.Builder
+	b.Grow(len(s))
+	inSpace := false
+	i := 0
+	for i < len(s) {
+		c := s[i]
+
+		// String literal or quoted identifier: copy verbatim until the
+		// closing quote, honoring doubled quotes ('' or "") as escapes.
+		if c == '\'' || c == '"' {
+			quote := c
+			b.WriteByte(c)
+			i++
+			for i < len(s) {
+				if s[i] == quote {
+					// Doubled quote is an escaped literal quote.
+					if i+1 < len(s) && s[i+1] == quote {
+						b.WriteByte(quote)
+						b.WriteByte(quote)
+						i += 2
+						continue
+					}
+					b.WriteByte(quote)
+					i++
+					break
+				}
+				b.WriteByte(s[i])
+				i++
+			}
+			inSpace = false
+			continue
+		}
+
+		// Dollar-quoted literal: $tag$ ... $tag$, tag may be empty ($$...$$).
+		if c == '$' {
+			if tag, ok := dollarQuoteTag(s, i); ok {
+				b.WriteString(s[i : i+len(tag)+2])
+				i += len(tag) + 2
+				closing := "$" + tag + "$"
+				end := strings.Index(s[i:], closing)
+				if end < 0 {
+					// Unterminated: copy the rest verbatim.
+					b.WriteString(s[i:])
+					i = len(s)
+				} else {
+					b.WriteString(s[i : i+end+len(closing)])
+					i += end + len(closing)
+				}
+				inSpace = false
+				continue
+			}
+		}
+
+		// Whitespace outside literals collapses to a single space.
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			if !inSpace {
+				b.WriteByte(' ')
+				inSpace = true
+			}
+			i++
+			continue
+		}
+
+		b.WriteByte(c)
+		inSpace = false
+		i++
+	}
+	return strings.TrimRight(b.String(), " ")
+}
+
+// dollarQuoteTag returns the tag of a dollar-quote opener starting at s[i]
+// when s[i:] begins with $tag$. ok is false when there is no valid opener.
+func dollarQuoteTag(s string, i int) (tag string, ok bool) {
+	// s[i] == '$'; find the closing '$'. A valid tag contains only letters,
+	// digits, and underscores (possibly empty).
+	j := i + 1
+	for j < len(s) && (isTagByte(s[j])) {
+		j++
+	}
+	if j < len(s) && s[j] == '$' {
+		return s[i+1 : j], true
+	}
+	return "", false
+}
+
+func isTagByte(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_'
 }
 
 // NormalizeHTTPBody returns canonical JSON when the body is valid JSON; otherwise

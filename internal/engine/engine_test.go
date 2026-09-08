@@ -3,6 +3,7 @@ package engine_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -915,6 +916,48 @@ func TestProcessResponse_HTTPLiveMismatch(t *testing.T) {
 	}
 	if !strings.Contains(active.Expectations["ext"][0].Error.Error(), "live response mismatch") {
 		t.Errorf("expected 'live response mismatch' in error, got: %v", active.Expectations["ext"][0].Error)
+	}
+}
+
+func TestProcessResponse_HTTPLiveMismatch_DiffPopulated(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"ext": {Mode: "live", URL: "http://example.com",
+				ExpectedResponse: &workspace.PayloadSpec{Payload: []byte("expected-marker")},
+			},
+		},
+	}
+	active := &engine.ActiveTest{
+		ID:    "t1",
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Suite: suite,
+		Expectations: map[string][]*engine.Expectation{
+			"ext": {{Target: "ext"}},
+		},
+	}
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("t1", active)
+
+	eng.ProcessResponse("http", "t1", "ext", nil, []byte(`{"data":"wrong"}`))
+
+	err := active.Expectations["ext"][0].Error
+	if err == nil {
+		t.Fatal("expected MismatchError on mismatch, got nil")
+	}
+	var mm *engine.MismatchError
+	if !errors.As(err, &mm) {
+		t.Fatalf("expected *engine.MismatchError, got %T", err)
+	}
+	if mm.Diff == "" {
+		t.Errorf("expected populated Diff on MismatchError, got empty")
+	}
+	if !strings.Contains(mm.Diff, "-expected-marker") {
+		t.Errorf("expected Diff to contain '-expected-marker', got:\n%s", mm.Diff)
+	}
+	if !strings.Contains(mm.Diff, `+{"data":"wrong"}`) {
+		t.Errorf("expected Diff to contain actual payload line, got:\n%s", mm.Diff)
 	}
 }
 

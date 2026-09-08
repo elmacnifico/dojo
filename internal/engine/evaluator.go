@@ -22,6 +22,11 @@ type AIEvaluator struct {
 	client *http.Client
 }
 
+// evaluatorPromptTemplate is the fixed prompt the engine sends to the
+// evaluator model. Kept as a constant so the template is parsed once per
+// engine instead of once per Evaluate Response clause.
+const evaluatorPromptTemplate = "You are a strict test evaluator. Decide whether the ACTUAL PAYLOAD satisfies every rule in EXPECTED RULE.\n\nEXPECTED RULE:\n{{.ExpectedRule}}\n\nACTUAL PAYLOAD:\n{{.ActualPayload}}\n\nRespond with ONLY a JSON object in this exact format (no markdown, no extra text):\n{\"pass\": true, \"reason\": \"short explanation\"}\nSet \"pass\" to true if ALL rules are satisfied, false otherwise. Always include a \"reason\"."
+
 type evalData struct {
 	ExpectedRule  string
 	ActualPayload string

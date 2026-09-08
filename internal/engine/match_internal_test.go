@@ -9,6 +9,40 @@ import (
 	"github.com/jackc/pgproto3/v2"
 )
 
+func TestPayloadsMatch_PostgresContainsWithSignificantLiterals(t *testing.T) {
+	t.Parallel()
+	cfg := workspace.APIConfig{Protocol: "postgres", Mode: "mock"}
+	vars := map[string]any{"user_id": "99999", "phone_number": "+15551234567"}
+
+	// Whitespace/semicolon differences still normalize away.
+	same := payloadsMatch(cfg,
+		[]byte("  INSERT INTO users (user_id, phone_number)   VALUES   ('99999', '+15551234567')  ; "),
+		[]byte("INSERT INTO users (user_id, phone_number) VALUES ('{{.user_id}}', '{{.phone_number}}');"),
+		vars)
+	if !same {
+		t.Error("expected whitespace-variant identical SQL to match")
+	}
+
+	// Containment: a short fixture matches a longer actual statement.
+	contains := payloadsMatch(cfg,
+		[]byte("INSERT INTO users (user_id, phone_number) VALUES ('99999', '+15551234567')"),
+		[]byte("INSERT INTO users"),
+		nil)
+	if !contains {
+		t.Error("expected fixture prefix to match longer actual statement (containment)")
+	}
+
+	// Whitespace inside string literals is significant: 'foo  bar' must
+	// never match 'foo bar' even though both normalize to one statement shape.
+	literal := payloadsMatch(cfg,
+		[]byte("SELECT * FROM t WHERE msg = 'foo bar'"),
+		[]byte("SELECT * FROM t WHERE msg = 'foo  bar'"),
+		nil)
+	if literal {
+		t.Error("expected double-space literal to not match single-space literal")
+	}
+}
+
 func TestFirstUnfulfilled_ConcurrentWithMarkFulfilled(t *testing.T) {
 	t.Parallel()
 	at := &ActiveTest{

@@ -8,7 +8,7 @@ import (
 
 // ValidateUniqueExpectedRequests returns an error if two or more tests in the suite
 // share the same normalized expected request payload for the same API name.
-// This guarantees implicit correlation by full normalized match cannot be ambiguous.
+// This guarantees implicit correlation by normalized matching cannot be ambiguous.
 // Within a single test, duplicate expectations for the same API are allowed
 // (ordered multi-expectations).
 func ValidateUniqueExpectedRequests(suite *Suite) error {

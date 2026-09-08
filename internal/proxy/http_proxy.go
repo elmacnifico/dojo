@@ -33,6 +33,10 @@ type HTTPProxy struct {
 	server     *http.Server
 	matchTable dojo.MatchTable
 	log        *slog.Logger
+	// upstreamClient is shared by all live-mode forwards so keep-alive
+	// connections are pooled. Built in [HTTPProxy.Start] with the resolved
+	// UpstreamTimeout.
+	upstreamClient *http.Client
 }
 
 // SetLogger configures the structured logger for the proxy.
@@ -159,7 +163,12 @@ func (p *HTTPProxy) Start(ctx context.Context, listenAddr string, matchTable doj
 		if timeout == 0 {
 			timeout = defaultUpstreamTimeout
 		}
-		client := &http.Client{Timeout: timeout}
+		client := p.upstreamClient
+		if client == nil {
+			// Defensive: Start normally builds this; fall back to a
+			// per-request timeout-matched client if Start was bypassed.
+			client = &http.Client{Timeout: timeout}
+		}
 		resp, err := client.Do(proxyReq)
 		if err != nil {
 			http.Error(w, "Failed to call external API", http.StatusBadGateway)
@@ -203,6 +212,12 @@ func (p *HTTPProxy) Start(ctx context.Context, listenAddr string, matchTable doj
 	p.listener = l
 	p.addr = l.Addr().String()
 
+	timeout := p.UpstreamTimeout
+	if timeout == 0 {
+		timeout = defaultUpstreamTimeout
+	}
+	p.upstreamClient = &http.Client{Timeout: timeout}
+
 	p.server = &http.Server{Handler: p.mux}
 
 	go p.server.Serve(p.listener)
@@ -215,6 +230,9 @@ func (p *HTTPProxy) Start(ctx context.Context, listenAddr string, matchTable doj
 
 // Stop gracefully shuts down the proxy.
 func (p *HTTPProxy) Stop() error {
+	if p.upstreamClient != nil {
+		p.upstreamClient.CloseIdleConnections()
+	}
 	if p.server != nil {
 		return p.server.Close()
 	}

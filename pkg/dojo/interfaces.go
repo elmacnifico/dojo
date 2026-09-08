@@ -19,7 +19,7 @@ type MatchResult struct {
 // It bridges the proxy layer and the engine's global registry.
 type MatchTable interface {
 	// ProcessRequest matches the intercepted request to an active test using normalized
-	// full equality on expected vs actual payloads, then returns mock response details if the API is mocked.
+	// full normalized matching on expected vs actual payloads, then returns mock response details if the API is mocked.
 	// reqHeaders carries the HTTP headers from the intercepted request (nil for non-HTTP protocols).
 	// reqURL is the URL path after the API name (e.g. "/media_foo" for /whatsapp_download/media_foo).
 	// Empty for non-HTTP protocols.

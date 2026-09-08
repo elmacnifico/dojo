@@ -329,15 +329,21 @@ finishes (all `Expect` lines for the HTTP trigger are satisfied, then any
 
 ### Request Matching: Normalized Full Equality
 
-Dojo correlates intercepted SUT traffic to active tests using **normalized full
-equality** between the resolved expected request fixture and the actual payload
+Dojo correlates intercepted SUT traffic to active tests using **normalized
+matching** between the resolved expected request fixture and the actual payload
 on the wire. There is no separate correlation config or routing key.
 
 When the SUT makes an outbound call to an API, Dojo:
 
-1. Normalizes the actual request payload.
-2. Compares it for exact equality against every active test's resolved expected
-  request for that API.
+1. Normalizes the actual request payload (SQL: collapse whitespace outside
+   string literals and strip one trailing `;`; HTTP: canonical JSON when the
+   body is valid JSON).
+2. Compares it against every active test's resolved expected request for that
+   API. For HTTP the expected body is a JSON **subset** (extra fields in the
+   actual are ignored). For Postgres the normalized expected statement must be
+   **contained** in the normalized actual statement — so a short fixture like
+   `INSERT INTO users` matches any insert into that table. Whitespace inside
+   SQL string literals is significant: `'foo  bar'` never matches `'foo bar'`.
 3. A single match means that request belongs to that test.
 
 ## Walk-through: `test_user_deactivate`

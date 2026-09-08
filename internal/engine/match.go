@@ -55,6 +55,10 @@ func payloadsMatch(cfg workspace.APIConfig, actual, expected []byte, vars map[st
 				}
 			}
 		}
+		// Containment on normalized SQL: the normalized expected statement
+		// must appear within the normalized actual statement. Whitespace
+		// inside string literals is significant (never collapsed), so
+		// 'foo  bar' cannot match 'foo bar' even under containment.
 		na := workspace.NormalizeSQL(string(actual))
 		ne := workspace.NormalizeSQL(expectedStr)
 		return strings.Contains(na, ne)
@@ -86,9 +90,10 @@ func headersMatch(actual map[string][]string, expectedJSON []byte) bool {
 
 // expectationSpecMatches reports whether an intercepted request satisfies the
 // given ordered expectation (body subset, optional headers, optional path).
-func expectationSpecMatches(cfg workspace.APIConfig, spec workspace.ExpectationSpec, reqPayload []byte, reqHeaders map[string][]string, reqURL string, vars map[string]any) bool {
+// Expected-SQL preparation is memoized in the engine's sqlCache.
+func (e *Engine) expectationSpecMatches(cfg workspace.APIConfig, spec workspace.ExpectationSpec, reqPayload []byte, reqHeaders map[string][]string, reqURL string, vars map[string]any) bool {
 	bodyMatch := spec.ExpectedRequest == nil || len(spec.ExpectedRequest.Payload) == 0 ||
-		payloadsMatch(cfg, reqPayload, spec.ExpectedRequest.Payload, vars)
+		payloadsMatchCached(e, cfg, reqPayload, spec.ExpectedRequest.Payload, vars)
 	if !bodyMatch {
 		return false
 	}
@@ -171,13 +176,13 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte, req
 				if i >= len(exps) || exps[i].Fulfilled {
 					continue
 				}
-				if !expectationSpecMatches(eff, spec, reqPayload, reqHeaders, reqURL, at.Variables) {
+				if !e.expectationSpecMatches(eff, spec, reqPayload, reqHeaders, reqURL, at.Variables) {
 					continue
 				}
 				j := i
 				for j+1 < len(eff.OrderedExpectations) && j+1 < len(exps) && !exps[j+1].Fulfilled {
 					nextSpec := eff.OrderedExpectations[j+1]
-					if !expectationSpecMatches(eff, nextSpec, reqPayload, reqHeaders, reqURL, at.Variables) {
+					if !e.expectationSpecMatches(eff, nextSpec, reqPayload, reqHeaders, reqURL, at.Variables) {
 						break
 					}
 					if !maxCallsLookaheadAllowed(exps[j]) {
@@ -200,7 +205,7 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte, req
 			return true
 		}
 		bodyMatch := eff.ExpectedRequest == nil || len(eff.ExpectedRequest.Payload) == 0 ||
-			payloadsMatch(eff, reqPayload, eff.ExpectedRequest.Payload, at.Variables)
+			payloadsMatchCached(e, eff, reqPayload, eff.ExpectedRequest.Payload, at.Variables)
 		if !bodyMatch {
 			return true
 		}
@@ -355,7 +360,7 @@ func (e *Engine) ProcessResponse(protocol, matchedID, apiName string, reqPayload
 				if len(eff.OrderedExpectations) > idx {
 					spec := eff.OrderedExpectations[idx]
 					if spec.ExpectedRequest != nil && len(spec.ExpectedRequest.Payload) > 0 {
-						if !payloadsMatch(eff, reqPayload, spec.ExpectedRequest.Payload, activeTest.Variables) {
+						if !payloadsMatchCached(e, eff, reqPayload, spec.ExpectedRequest.Payload, activeTest.Variables) {
 							continue
 						}
 					}
@@ -408,11 +413,9 @@ func (e *Engine) ProcessResponse(protocol, matchedID, apiName string, reqPayload
 			} else {
 				exp := truncate(string(apiConfig.ExpectedResponse.Payload), 500)
 				act := truncate(string(respPayload), 500)
-				activeTest.MarkFulfilled(apiName, idx, &MismatchError{
-					Reason:   fmt.Sprintf("live response mismatch for API %s\n  expected (substring): %s\n  actual:              %s", apiName, exp, act),
-					Expected: exp,
-					Actual:   act,
-				})
+				activeTest.MarkFulfilled(apiName, idx, newMismatchError(
+					fmt.Sprintf("live response mismatch for API %s\n  expected (substring): %s\n  actual:              %s", apiName, exp, act),
+					exp, act))
 			}
 		} else if unfulfilled := activeTest.FirstUnfulfilled(apiName); unfulfilled != nil && unfulfilled.RequiresEval {
 			payloadCopy := make([]byte, len(respPayload))

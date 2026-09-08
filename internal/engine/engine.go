@@ -74,6 +74,19 @@ type Engine struct {
 	// match the same ordered expectation index before MarkFulfilled runs.
 	processRequestMu sync.Mutex
 
+	// sqlCache memoizes prepared expected-SQL fixtures (parsed templates and
+	// normalized forms) so per-request correlation does not re-parse them.
+	// Accessed only under processRequestMu.
+	sqlCache map[sqlCacheKey]*sqlCacheValue
+
+	// evaluator is the lazily constructed AI evaluator shared by all
+	// Evaluate Response clauses. Built once per engine from the suite's
+	// evaluator config; the parsed prompt template and HTTP client are
+	// reused across evaluations.
+	evaluator *AIEvaluator
+	// evaluatorMu guards evaluator construction.
+	evaluatorMu sync.Mutex
+
 	// firstSeedFail records the first per-test seed error in a suite run so
 	// [RunSuite] can cascade failures across all tests.
 	seedFailMu    sync.Mutex
@@ -100,6 +113,7 @@ func NewEngine(ws *workspace.Workspace, opts ...EngineOption) *Engine {
 		HTTPProxy:     proxy.NewHTTPProxy(),
 		PostgresProxy: proxy.NewPostgresProxy(""),
 		sutDeadCh:     make(chan struct{}),
+		sqlCache:      make(map[sqlCacheKey]*sqlCacheValue),
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -470,6 +484,7 @@ func (e *Engine) RunSuite(ctx context.Context, suiteName string, onResult func(w
 						tr.Actual = mm.Actual
 						failure.Expected = mm.Expected
 						failure.Actual = mm.Actual
+						failure.Diff = mm.Diff
 					}
 					summary.Failed++
 					summary.Failures = append(summary.Failures, failure)

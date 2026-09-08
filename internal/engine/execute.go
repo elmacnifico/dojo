@@ -22,11 +22,13 @@ import (
 
 // MismatchError is returned when an actual payload does not match the expected
 // one. It carries structured Expected/Actual data so callers (e.g. RunSuite)
-// can populate [workspace.TestFailure] fields for rich reports.
+// can populate [workspace.TestFailure] fields for rich reports, plus a
+// pre-rendered line Diff for quick human triage.
 type MismatchError struct {
 	Reason   string
 	Expected string
 	Actual   string
+	Diff     string
 }
 
 func (e *MismatchError) Error() string { return e.Reason }
@@ -305,11 +307,9 @@ func (e *Engine) triggerEntrypoint(ctx context.Context, suite *workspace.Suite, 
 			if !httpPayloadContains(respBody, ep.ExpectedResponse.Payload) {
 				exp := truncate(string(ep.ExpectedResponse.Payload), 500)
 				act := truncate(string(respBody), 500)
-				return &MismatchError{
-					Reason:   fmt.Sprintf("entrypoint response mismatch\n  expected (substring): %s\n  actual:              %s", exp, act),
-					Expected: exp,
-					Actual:   act,
-				}
+				return newMismatchError(
+					fmt.Sprintf("entrypoint response mismatch\n  expected (substring): %s\n  actual:              %s", exp, act),
+					exp, act)
 			}
 		}
 	default:
@@ -477,11 +477,9 @@ func (e *Engine) executePostgresPerform(ctx context.Context, active *ActiveTest,
 		if !workspace.JSONSubsetMatch(actual, expected) {
 			exp := truncate(string(expected), 500)
 			act := truncate(string(actual), 500)
-			return &MismatchError{
-				Reason:   fmt.Sprintf("postgres result mismatch\n  expected: %s\n  actual:   %s", exp, act),
-				Expected: exp,
-				Actual:   act,
-			}
+			return newMismatchError(
+				fmt.Sprintf("postgres result mismatch\n  expected: %s\n  actual:   %s", exp, act),
+				exp, act)
 		}
 		return nil
 	}
@@ -595,10 +593,19 @@ func (e *Engine) Evaluate(activeTest *ActiveTest, payload []byte) error {
 		return fmt.Errorf("evaluator config missing in dojo.yaml")
 	}
 
-	evaluator, err := NewAIEvaluator(cfg, "You are a strict test evaluator. Decide whether the ACTUAL PAYLOAD satisfies every rule in EXPECTED RULE.\n\nEXPECTED RULE:\n{{.ExpectedRule}}\n\nACTUAL PAYLOAD:\n{{.ActualPayload}}\n\nRespond with ONLY a JSON object in this exact format (no markdown, no extra text):\n{\"pass\": true, \"reason\": \"short explanation\"}\nSet \"pass\" to true if ALL rules are satisfied, false otherwise. Always include a \"reason\".")
-	if err != nil {
-		return fmt.Errorf("creating evaluator: %w", err)
+	// Build the evaluator once per engine; the parsed prompt template and
+	// HTTP client are reused across every Evaluate Response clause.
+	e.evaluatorMu.Lock()
+	if e.evaluator == nil {
+		ev, err := NewAIEvaluator(cfg, evaluatorPromptTemplate)
+		if err != nil {
+			e.evaluatorMu.Unlock()
+			return fmt.Errorf("creating evaluator: %w", err)
+		}
+		e.evaluator = ev
 	}
+	evaluator := e.evaluator
+	e.evaluatorMu.Unlock()
 
 	parent := activeTest.Ctx
 	if parent == nil {
