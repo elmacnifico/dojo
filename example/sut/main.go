@@ -355,10 +355,12 @@ func handleAsk(w http.ResponseWriter, r *http.Request) {
 			Parts: []geminiPart{{Text: intentSystemPrompt}},
 		},
 		GenerationConfig: geminiGenerationConfig{
-			Temperature:      0.2,
-			TopP:             0.95,
-			TopK:             40,
-			MaxOutputTokens:  256,
+			Temperature: 0.2,
+			TopP:        0.95,
+			TopK:        40,
+			// Thinking models spend output tokens on reasoning before the
+			// answer; 256 truncated the JSON classification mid-thought.
+			MaxOutputTokens:  2048,
 			ResponseMIMEType: "application/json",
 		},
 		SafetySettings: []geminiSafetySetting{
@@ -374,7 +376,7 @@ func handleAsk(w http.ResponseWriter, r *http.Request) {
 	if intentURL != "" {
 		payload, err := json.Marshal(intentReq)
 		if err == nil {
-			target := intentURL + "/v1beta/models/gemini-2.0-flash:generateContent"
+			target := intentURL + "/v1beta/models/gemini-3.6-flash:generateContent"
 			resp, err := client.Post(target, "application/json", bytes.NewReader(payload))
 			if err == nil {
 				respBody, _ := io.ReadAll(resp.Body)
@@ -406,10 +408,12 @@ func handleAsk(w http.ResponseWriter, r *http.Request) {
 			Parts: []geminiPart{{Text: messageSystemPrompt}},
 		},
 		GenerationConfig: geminiGenerationConfig{
-			Temperature:      0.7,
-			TopP:             0.95,
-			TopK:             40,
-			MaxOutputTokens:  1024,
+			Temperature: 0.7,
+			TopP:        0.95,
+			TopK:        40,
+			// Thinking models spend part of the budget on reasoning; 1024
+			// truncated long customer responses mid-sentence.
+			MaxOutputTokens:  8192,
 			ResponseMIMEType: "text/plain",
 		},
 		SafetySettings: []geminiSafetySetting{
@@ -425,7 +429,7 @@ func handleAsk(w http.ResponseWriter, r *http.Request) {
 	if messageURL != "" {
 		payload, err := json.Marshal(msgReq)
 		if err == nil {
-			target := messageURL + "/v1beta/models/gemini-2.0-flash:generateContent"
+			target := messageURL + "/v1beta/models/gemini-3.6-flash:generateContent"
 			resp, err := client.Post(target, "application/json", bytes.NewReader(payload))
 			if err == nil {
 				respBody, _ := io.ReadAll(resp.Body)

@@ -10,7 +10,7 @@
     "temperature": 0.2,
     "topP": 0.95,
     "topK": 40,
-    "maxOutputTokens": 256,
+    "maxOutputTokens": 2048,
     "responseMimeType": "application/json"
   },
   "safetySettings": [

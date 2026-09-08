@@ -4,7 +4,7 @@ sut_base_url: "http://127.0.0.1:29474"
 sut_command: "PORT=29474 go run ../../sut/main.go"
 evaluator:
   provider: gemini
-  model: gemini-2.0-flash
+  model: gemini-3.6-flash
   api_key_env: GEMINI_API_KEY
 timeouts:
   perform: 30s
@@ -13,13 +13,13 @@ timeouts:
 apis:
   intent:
     mode: mock
-    url: "/v1beta/models/gemini-2.0-flash:generateContent"
+    url: "/v1beta/models/gemini-3.6-flash:generateContent"
     default_response:
       code: 200
       body: '{"candidates":[{"content":{"parts":[{"text":"{}"}],"role":"model"},"finishReason":"STOP"}]}'
   message:
     mode: mock
-    url: "/v1beta/models/gemini-2.0-flash:generateContent"
+    url: "/v1beta/models/gemini-3.6-flash:generateContent"
     default_response:
       code: 200
       body: '{"candidates":[{"content":{"parts":[{"text":"Thank you for contacting TechCorp support."}],"role":"model"},"finishReason":"STOP"}]}'
