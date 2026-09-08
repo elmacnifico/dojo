@@ -716,7 +716,10 @@ under the table.
 In **JSON** / **jsonl** output, each test result may include `llm_usage` (all
 summed counters), `llm_usage_by_api`, and `llm_usage_derived`. Tracking is
 automatic; fields are omitted when no usage was observed. **Streaming/SSE**
-usage (final chunk only) is not parsed yet.
+bodies are parsed too: Dojo scans the `data:` chunks and takes the usage block
+from the last chunk that carries one (OpenAI final chunk with
+`stream_options.include_usage`, Gemini `usageMetadata` on the last chunk,
+Anthropic `message_delta`).
 
 ## Outputs and Artifacts
 

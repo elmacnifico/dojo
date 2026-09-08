@@ -198,6 +198,14 @@ func parseNestedResponseUsage(data map[string]any, usage *workspace.LLMUsage) bo
 // parseUsage extracts LLM token usage from JSON response bodies (OpenAI, Anthropic,
 // Gemini, or OpenAI Responses-style). Returns false when no recognized usage block exists.
 func parseUsage(payload []byte) (workspace.LLMUsage, bool) {
+	// SSE streaming bodies are not one JSON object: scan the data chunks and
+	// take the usage from the last chunk that carries one (OpenAI sends it in
+	// the final chunk with stream_options.include_usage; Gemini on the last
+	// chunk as usageMetadata; Anthropic in the message_delta event).
+	if isSSE(payload) {
+		return parseSSEUsage(payload)
+	}
+
 	var usage workspace.LLMUsage
 	var data map[string]any
 	dec := json.NewDecoder(bytes.NewReader(payload))
@@ -205,7 +213,53 @@ func parseUsage(payload []byte) (workspace.LLMUsage, bool) {
 	if err := dec.Decode(&data); err != nil {
 		return usage, false
 	}
+	return parseUsageObject(data, usage)
+}
 
+// isSSE reports whether the payload looks like an event-stream body: at least
+// one line starting with "data:" or "event:".
+func isSSE(payload []byte) bool {
+	for _, line := range bytes.Split(payload, []byte("\n")) {
+		trimmed := bytes.TrimLeft(line, " \t\r")
+		if bytes.HasPrefix(trimmed, []byte("data:")) || bytes.HasPrefix(trimmed, []byte("event:")) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseSSEUsage walks the data chunks of an SSE body and returns the usage
+// from the last chunk containing a recognized usage block.
+func parseSSEUsage(payload []byte) (workspace.LLMUsage, bool) {
+	var last workspace.LLMUsage
+	found := false
+	for _, line := range bytes.Split(payload, []byte("\n")) {
+		trimmed := bytes.TrimLeft(line, " \t\r")
+		if !bytes.HasPrefix(trimmed, []byte("data:")) {
+			continue
+		}
+		body := bytes.TrimSpace(trimmed[len("data:"):])
+		if len(body) == 0 || bytes.Equal(body, []byte("[DONE]")) {
+			continue
+		}
+		var chunk map[string]any
+		dec := json.NewDecoder(bytes.NewReader(body))
+		dec.UseNumber()
+		if err := dec.Decode(&chunk); err != nil {
+			continue
+		}
+		if u, ok := parseUsageObject(chunk, workspace.LLMUsage{}); ok {
+			last = u
+			found = true
+		}
+	}
+	return last, found
+}
+
+// parseUsageObject extracts a recognized usage block from a decoded JSON
+// object, trying Gemini usageMetadata, top-level usage, and nested
+// response.usage shapes in the same precedence order as plain JSON bodies.
+func parseUsageObject(data map[string]any, usage workspace.LLMUsage) (workspace.LLMUsage, bool) {
 	if um, ok := data["usageMetadata"].(map[string]any); ok {
 		if parseGeminiUsageMetadata(um, &usage) {
 			return usage, true

@@ -126,40 +126,8 @@ func (e *Engine) prepareEntrypoint(ctx context.Context, id string, test *workspa
 		}
 	}
 
-	expIdx := make(map[string]int)
-	for _, l := range phase.Expects {
-		apiName := l.Target
-		if idx := strings.IndexByte(apiName, '/'); idx >= 0 {
-			apiName = apiName[:idx]
-		}
-		idx := expIdx[apiName]
-		exp := &Expectation{
-			Target: apiName,
-			Index:  idx,
-		}
-		if d := test.APIs[apiName].TimeoutDuration(); d > 0 {
-			exp.Deadline = d
-		} else {
-			exp.Deadline = suite.Config.Timeouts.Expect.Duration
-		}
-		for _, clause := range l.Clauses {
-			if strings.ToLower(clause.Key) == "evaluate response" {
-				exp.RequiresEval = true
-			}
-		}
-		mc, mcHas, mcErr := workspace.ParseMaxCallsFromExpectLine(l)
-		if mcErr != nil {
-			return nil, ep, nil, 0, fmt.Errorf("test %s expect %s: %w", id, l.Target, mcErr)
-		}
-		if mcHas {
-			exp.MaxCalls = mc
-		}
-		active.Expectations[apiName] = append(active.Expectations[apiName], exp)
-		expIdx[apiName] = idx + 1
-	}
-
-	if len(active.Expectations) == 0 {
-		close(active.done)
+	if err := buildExpectations(active, phase.Expects, test, suite, fmt.Sprintf("test %s", id)); err != nil {
+		return nil, ep, nil, 0, err
 	}
 
 	return active, ep, payload, expectStatus, nil
@@ -216,40 +184,8 @@ func (e *Engine) prepareStartupPlan(ctx context.Context, suite *workspace.Suite,
 		done:         make(chan struct{}),
 	}
 
-	expIdx := make(map[string]int)
-	for _, l := range doc.Lines {
-		apiName := l.Target
-		if idx := strings.IndexByte(apiName, '/'); idx >= 0 {
-			apiName = apiName[:idx]
-		}
-		idx := expIdx[apiName]
-		exp := &Expectation{
-			Target: apiName,
-			Index:  idx,
-		}
-		if d := test.APIs[apiName].TimeoutDuration(); d > 0 {
-			exp.Deadline = d
-		} else {
-			exp.Deadline = suite.Config.Timeouts.Expect.Duration
-		}
-		for _, clause := range l.Clauses {
-			if strings.ToLower(clause.Key) == "evaluate response" {
-				exp.RequiresEval = true
-			}
-		}
-		mc, mcHas, mcErr := workspace.ParseMaxCallsFromExpectLine(l)
-		if mcErr != nil {
-			return nil, fmt.Errorf("startup plan expect %s: %w", l.Target, mcErr)
-		}
-		if mcHas {
-			exp.MaxCalls = mc
-		}
-		active.Expectations[apiName] = append(active.Expectations[apiName], exp)
-		expIdx[apiName] = idx + 1
-	}
-
-	if len(active.Expectations) == 0 {
-		close(active.done)
+	if err := buildExpectations(active, doc.Lines, test, suite, "startup plan"); err != nil {
+		return nil, err
 	}
 
 	return active, nil

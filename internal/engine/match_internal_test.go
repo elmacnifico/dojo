@@ -332,6 +332,35 @@ func TestParseUsage(t *testing.T) {
 			want:      workspace.LLMUsage{PromptTokens: 10, TotalTokens: 10},
 			wantFound: true,
 		},
+		{
+			name: "OpenAI SSE stream, usage in final chunk",
+			payload: []byte("data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n" +
+				"data: {\"choices\":[{\"delta\":{\"content\":\"!\"}}]}\n\n" +
+				"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":3,\"total_tokens\":14}}\n\n" +
+				"data: [DONE]\n\n"),
+			want:      workspace.LLMUsage{PromptTokens: 11, CompletionTokens: 3, TotalTokens: 14},
+			wantFound: true,
+		},
+		{
+			name: "Gemini SSE stream, usageMetadata in final chunk",
+			payload: []byte("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\"}]}}]}\r\n\r\n" +
+				"data: {\"usageMetadata\":{\"promptTokenCount\":21,\"candidatesTokenCount\":5,\"totalTokenCount\":26}}\r\n\r\n"),
+			want:      workspace.LLMUsage{PromptTokens: 21, CompletionTokens: 5, TotalTokens: 26},
+			wantFound: true,
+		},
+		{
+			name: "Anthropic SSE stream, usage in message_delta",
+			payload: []byte("event: content_block_delta\ndata: {\"delta\":{\"text\":\"hi\"}}\n\n" +
+				"event: message_delta\ndata: {\"usage\":{\"output_tokens\":9,\"input_tokens\":40}}\n\n"),
+			want:      workspace.LLMUsage{PromptTokens: 40, CompletionTokens: 9, TotalTokens: 49},
+			wantFound: true,
+		},
+		{
+			name:      "SSE stream without usage",
+			payload:   []byte("data: {\"choices\":[{\"delta\":{\"content\":\"no usage\"}}]}\n\ndata: [DONE]\n\n"),
+			want:      workspace.LLMUsage{},
+			wantFound: false,
+		},
 	}
 
 	for _, tt := range tests {

@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -120,6 +122,50 @@ func (a *ActiveTest) FirstUnfulfilled(apiName string) *Expectation {
 		if !exp.Fulfilled {
 			return exp
 		}
+	}
+	return nil
+}
+
+// buildExpectations populates at.Expectations from parsed Expect lines. Each
+// line targets an API (with optional /path suffix stripped for lookup),
+// inherits the per-API timeout or the suite expect default, and honors
+// Evaluate Response and MaxCalls clauses. Expectations for the same API are
+// ordered by declaration. errPrefix labels parse errors (e.g. "test foo" or
+// "startup plan").
+func buildExpectations(at *ActiveTest, lines []workspace.ParsedLine, test *workspace.Test, suite *workspace.Suite, errPrefix string) error {
+	expIdx := make(map[string]int)
+	for _, l := range lines {
+		apiName := l.Target
+		if idx := strings.IndexByte(apiName, '/'); idx >= 0 {
+			apiName = apiName[:idx]
+		}
+		idx := expIdx[apiName]
+		exp := &Expectation{
+			Target: apiName,
+			Index:  idx,
+		}
+		if d := test.APIs[apiName].TimeoutDuration(); d > 0 {
+			exp.Deadline = d
+		} else {
+			exp.Deadline = suite.Config.Timeouts.Expect.Duration
+		}
+		for _, clause := range l.Clauses {
+			if strings.ToLower(clause.Key) == "evaluate response" {
+				exp.RequiresEval = true
+			}
+		}
+		mc, mcHas, mcErr := workspace.ParseMaxCallsFromExpectLine(l)
+		if mcErr != nil {
+			return fmt.Errorf("%s expect %s: %w", errPrefix, l.Target, mcErr)
+		}
+		if mcHas {
+			exp.MaxCalls = mc
+		}
+		at.Expectations[apiName] = append(at.Expectations[apiName], exp)
+		expIdx[apiName] = idx + 1
+	}
+	if len(at.Expectations) == 0 {
+		close(at.done)
 	}
 	return nil
 }

@@ -87,6 +87,13 @@ type Engine struct {
 	// evaluatorMu guards evaluator construction.
 	evaluatorMu sync.Mutex
 
+	// apiURLs maps API names to this engine's proxy addresses
+	// (API_<NAME>_URL values). Used for $API_*_URL expansion in mock
+	// response bodies so the expansion resolves against this engine's
+	// proxies even when another engine mutates the process environment.
+	// Populated by StartProxies.
+	apiURLs map[string]string
+
 	// firstSeedFail records the first per-test seed error in a suite run so
 	// [RunSuite] can cascade failures across all tests.
 	seedFailMu    sync.Mutex
@@ -187,7 +194,11 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) (StartupPha
 		}
 	}
 
-	// Publish API_*_URL env vars so mock response bodies can use $API_*_URL.
+	// Publish API_*_URL env vars for the SUT child process (os.Setenv keeps
+	// the documented delivery mechanism for the SUT's environment). The
+	// engine-local apiURLs snapshot below is what mock-body expansion uses,
+	// so it stays correct even if the process env is later overwritten.
+	e.apiURLs = make(map[string]string, len(suite.APIs))
 	for apiName, apiConfig := range suite.APIs {
 		var val string
 		if apiConfig.Protocol == "postgres" || strings.HasPrefix(apiConfig.URL, "postgres://") {
@@ -199,6 +210,7 @@ func (e *Engine) StartProxies(ctx context.Context, suiteName string) (StartupPha
 		} else {
 			val = fmt.Sprintf("http://%s/%s", e.HTTPProxy.Addr(), apiName)
 		}
+		e.apiURLs[apiName] = val
 		os.Setenv(fmt.Sprintf("API_%s_URL", strings.ToUpper(apiName)), val)
 	}
 

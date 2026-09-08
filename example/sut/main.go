@@ -123,7 +123,9 @@ const intentSystemPrompt = "You are a customer message classifier for TechCorp. 
 
 const messageSystemPrompt = "You are a customer service response writer for TechCorp. " +
 	"Given the original customer message and the intent classification, " +
-	"write a helpful, professional response."
+	"write a helpful, professional response. Never invent specific URLs, " +
+	"phone numbers, or email addresses; use bracketed placeholders such as " +
+	"[Support Email] or [Help Center] instead."
 
 // emitDojoStartupProbe posts a unique payload to the mocked Gemini API so the
 // Dojo example suite can assert on startup traffic via startup.plan.

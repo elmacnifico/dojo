@@ -1818,6 +1818,55 @@ entrypoints:
 	}
 }
 
+// TestEnvVarExpansionUsesEngineAPIURLs verifies mock-body $API_*_URL expansion
+// resolves against the engine's own proxy addresses, not ambient process env.
+// A second engine (or stale exported var) overwriting the ambient var after
+// this engine started must not corrupt this engine's mock responses.
+func TestEnvVarExpansionUsesEngineAPIURLs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	testutil.AppendFile(t, tmpDir, "suite/dojo.yaml", `
+concurrency: 1
+apis:
+  media:
+    mode: mock
+    default_response:
+      code: 200
+      body: '{"url": "$API_MEDIA_URL/download/file.jpg"}'
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+`)
+	testutil.CreateFile(t, tmpDir, "suite/test_expand/test.plan", "Perform -> entrypoints/webhook -> Payload: incoming.json")
+	testutil.CreateFile(t, tmpDir, "suite/test_expand/incoming.json", `{}`)
+
+	ws, err := workspace.LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace: %v", err)
+	}
+
+	eng := engine.NewEngine(ws)
+	if _, err := eng.StartProxies(context.Background(), "suite"); err != nil {
+		t.Fatalf("StartProxies: %v", err)
+	}
+	defer eng.StopProxies()
+
+	// Simulate a second engine in the same process overwriting the ambient
+	// var after this engine already started. Mock-body expansion for THIS
+	// engine must still resolve to THIS engine's proxy address.
+	t.Setenv("API_MEDIA_URL", "http://127.0.0.1:2/other-engine-media")
+
+	m := eng.ProcessRequest("http", "media", []byte(`{}`), nil, "")
+	if m.Err != nil {
+		t.Fatalf("ProcessRequest: %v", m.Err)
+	}
+	want := fmt.Sprintf(`{"url": "http://%s/media/download/file.jpg"}`, eng.HTTPProxy.Addr())
+	if string(m.MockResponse) != want {
+		t.Errorf("mock body expansion did not use engine API URLs\n  got:  %s\n  want: %s", string(m.MockResponse), want)
+	}
+}
+
 func TestMockResponseContentType(t *testing.T) {
 	var gotContentType string
 	var mediaURL string

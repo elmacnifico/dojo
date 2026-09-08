@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -309,7 +308,7 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte, req
 		result.MockContentType = apiConfig.DefaultResponse.ContentType
 		payload := apiConfig.DefaultResponse.Payload
 		if apiConfig.DefaultResponse.File == "" || strings.HasSuffix(apiConfig.DefaultResponse.File, ".json") {
-			payload = []byte(os.ExpandEnv(string(payload)))
+			payload = []byte(e.expandMockEnv(string(payload)))
 		}
 		result.MockResponse = payload
 
