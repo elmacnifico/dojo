@@ -1,3 +1,4 @@
 Perform -> POST /media-process -> Payload: incoming.json
 
+Expect -> media -> Respond: photo.jpg
 Expect -> gemini -> Request: gemini_request.json -> Respond: gemini_response.json

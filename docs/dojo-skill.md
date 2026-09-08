@@ -231,9 +231,15 @@ Binary file payloads skip `$VAR` expansion to avoid corrupting binary data.
 ### Test-level API override
 
 Place `test_foo/dojo.yaml` with only the fields that differ under `apis:`. Suite
-config is copied first; then the test YAML is merged on top. Test-level
-overrides apply even when the plan has no `Expect` clause for that API -- Dojo
-uses the override for mock responses whenever that test is the only active test.
+config is copied first; then the test YAML is merged on top. When a request
+matches one of the test's `Expect` lines, the test-level override supplies the
+response. An override without a matching `Expect` line auto-applies to
+unmatched traffic **only when that test is the only active test** (single-test
+runs or `concurrency: 1`); under concurrency, unmatched traffic falls back to
+the suite-level config. For request-matched workflows, prefer an explicit
+`Expect -> <api>[/<unique-path>] -> Request: <unique-substring>` (plus
+`Respond:` or `MaxCalls:` as needed) so the override stays scoped to this
+test's own SUT traffic.
 
 This is the primary mechanism for serving test-specific binary fixtures:
 
@@ -454,12 +460,14 @@ Non-JSON files are sent as raw bytes.
 ### Example: binary mock response (test-level API override)
 
 When the SUT fetches a binary resource from an external API, override the mock
-at the test level to serve a real file. The plan does not need an `Expect`
-clause for the mocked API -- the test-level override applies automatically:
+at the test level to serve a real file. Prefer an explicit `Expect` line with
+a path-scoped target and `Respond:` — the override's response then serves only
+requests matched by this test (required under concurrency):
 
 ```text
 Perform -> POST /media-process -> Payload: incoming.json
 
+Expect -> media/media-001 -> Respond: photo.jpg
 Expect -> gemini
 ```
 
@@ -476,6 +484,13 @@ apis:
 
 And `test_media_process/photo.jpg` alongside it. When the SUT calls the media
 API, Dojo serves `photo.jpg` with the correct content type.
+
+**Concurrency note:** a test-level override without a matching `Expect` line
+only auto-applies when that test is the **only active test** in the suite
+(e.g. `concurrency: 1`). With concurrent tests, unmatched traffic belongs to
+other tests, so Dojo falls back to the suite-level API config. Always declare
+an explicit request-matched `Expect` (scoped by unique path or body) for
+override-driven responses in concurrent suites.
 
 ### Example: ordered multi-expectations
 

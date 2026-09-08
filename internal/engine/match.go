@@ -235,30 +235,34 @@ func (e *Engine) ProcessRequest(protocol, apiName string, reqPayload []byte, req
 	if activeTest != nil {
 		apiConfig = effectiveAPIConfig(suite, activeTest, apiName)
 	} else {
-		// No expectation matched, but if exactly one active test carries a
+		// No expectation matched, but if the single active test carries a
 		// test-level API override for this API, use that config for the mock
 		// response. This lets tests override default_response (e.g. serve a
 		// binary file) without needing an Expect clause.
 		// Skip overrides from tests that have expectations for this API — their
 		// override is for matched-response workflows, not general defaults.
+		//
+		// The override only applies when that test is the ONLY active test:
+		// with concurrent tests, an unmatched request belongs to one of the
+		// other tests' SUT traffic, and serving this test's override mock
+		// here would leak it into their flows (e.g. a mocked 400 hijacking a
+		// live API call).
 		var override *workspace.APIConfig
-		e.Registry.ForEach(func(_ string, at *ActiveTest) bool {
-			if len(at.Expectations[apiName]) > 0 {
-				return true
-			}
-			if tcfg, ok := at.Test.APIs[apiName]; ok {
-				suiteCfg := suite.APIs[apiName]
-				// Check if this test actually overrides the suite config
-				if !reflect.DeepEqual(tcfg, suiteCfg) {
-					if override != nil {
-						override = nil // ambiguous — more than one test overrides
-						return false
-					}
-					override = &tcfg
+		if e.Registry.Count() == 1 {
+			e.Registry.ForEach(func(_ string, at *ActiveTest) bool {
+				if len(at.Expectations[apiName]) > 0 {
+					return true
 				}
-			}
-			return true
-		})
+				if tcfg, ok := at.Test.APIs[apiName]; ok {
+					suiteCfg := suite.APIs[apiName]
+					// Check if this test actually overrides the suite config
+					if !reflect.DeepEqual(tcfg, suiteCfg) {
+						override = &tcfg
+					}
+				}
+				return true
+			})
+		}
 		if override != nil {
 			apiConfig = *override
 		}

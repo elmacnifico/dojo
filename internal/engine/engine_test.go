@@ -412,6 +412,68 @@ func TestProcessRequest_SubsetMatchSucceeds(t *testing.T) {
 	}
 }
 
+// TestProcessRequest_TestOverrideMustNotLeakToOtherActiveTests guards the
+// documented "only active test" semantics of test-level API overrides.
+// While test A (which overrides gemini_intent to serve a mock 400) runs
+// concurrently with test B (live gemini_intent, no expectation matching a
+// given request), the unmatched request from test B must NOT be served test
+// A's override mock — it must fall through to the suite-level (live) config.
+// Regression: the override used to apply whenever exactly one active test
+// carried an override, leaking the mock into every concurrent test's
+// unmatched traffic.
+func TestProcessRequest_TestOverrideMustNotLeakToOtherActiveTests(t *testing.T) {
+	t.Parallel()
+	suite := &workspace.Suite{
+		APIs: map[string]workspace.APIConfig{
+			"gemini_intent": {Mode: "live", URL: "https://example.test/gemini"},
+		},
+	}
+
+	// Test A: carries a test-level mock override for gemini_intent and has
+	// expectations only on another API (so the override is "general default"
+	// style, matching the real-world proofcoach e2e failure scenario).
+	testA := &engine.ActiveTest{
+		ID:    "test_override_owner",
+		Suite: suite,
+		Test: &workspace.Test{APIs: map[string]workspace.APIConfig{
+			"gemini_intent": {Mode: "mock", URL: "/mock",
+				DefaultResponse: &workspace.DefaultResponse{Code: 400, Payload: []byte(`{"error": {"message": "Bad Request"}}`)}},
+		}},
+		Expectations: map[string][]*engine.Expectation{
+			"whatsapp": {{Target: "whatsapp"}},
+		},
+	}
+
+	// Test B: live gemini_intent, no gemini_intent expectations at all (as in
+	// fully-live e2e suites where Gemini traffic is not request-matched).
+	// Its SUT request arrives unmatched while test A runs concurrently.
+	testB := &engine.ActiveTest{
+		ID:    "test_other",
+		Suite: suite,
+		Test:  &workspace.Test{APIs: map[string]workspace.APIConfig{}},
+		Expectations: map[string][]*engine.Expectation{
+			"whatsapp": {{Target: "whatsapp"}},
+		},
+	}
+
+	eng := engine.NewEngine(&workspace.Workspace{})
+	eng.ActiveSuite = suite
+	eng.Registry.Register("test_override_owner", testA)
+	eng.Registry.Register("test_other", testB)
+
+	// Unmatched request for gemini_intent while both tests are active.
+	m := eng.ProcessRequest("http", "gemini_intent", []byte(`{"contents":[{"role":"user","parts":[{"text":"from test B"}]}]}`), nil, "")
+	if m.Err != nil {
+		t.Fatalf("unexpected error: %v", m.Err)
+	}
+	if m.IsMock {
+		t.Fatalf("test-level mock override leaked to concurrent active test: got mock response %q (code %d), want live passthrough", string(m.MockResponse), m.MockCode)
+	}
+	if m.DestURL != suite.APIs["gemini_intent"].URL {
+		t.Errorf("DestURL: got %q, want suite-level %q", m.DestURL, suite.APIs["gemini_intent"].URL)
+	}
+}
+
 func TestProcessRequest_SubsetMismatchFails(t *testing.T) {
 	t.Parallel()
 	suite := &workspace.Suite{

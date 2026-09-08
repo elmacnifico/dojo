@@ -610,9 +610,13 @@ test_media_process/
   media_process.plan
 ```
 
-Test-level API overrides apply even when the plan has no `Expect` clause for
-that API -- Dojo uses the override for mock responses whenever that test is the
-sole active test.
+Test-level API overrides apply to requests matched by the test's own `Expect`
+lines. An override with no matching `Expect` line auto-applies to unmatched
+traffic only when that test is the sole active test (single-test runs or
+`concurrency: 1`); under concurrency, unmatched traffic falls back to the
+suite-level config. For deterministic concurrent tests, scope the override
+with an explicit request-matched `Expect` (unique path or body substring),
+e.g. `Expect -> media/media-001 -> Respond: photo.jpg`.
 
 ### MaxCalls (Variable Repeat Expectations)
 
