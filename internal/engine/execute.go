@@ -255,17 +255,43 @@ func (e *Engine) triggerEntrypoint(ctx context.Context, suite *workspace.Suite, 
 	return nil
 }
 
+// evalDeadline grades the stored final response of a live multi-round flow
+// whose call budget was never consumed (the model finalized before reaching
+// MaxCalls). Runs synchronously inside the deadline goroutine so the phase
+// cannot complete before the verdict is recorded.
+func (e *Engine) evalDeadline(exp *Expectation, apiName string, active *ActiveTest, payload []byte) {
+	var checkErr error
+	if exp.RequiresEval {
+		if err := e.Evaluate(active, payload); err != nil {
+			checkErr = fmt.Errorf("AI Evaluation failed: %w", err)
+		}
+	}
+	active.MarkFulfilled(apiName, exp.Index, checkErr)
+}
+
 func (e *Engine) awaitPhaseExpectations(ctx context.Context, active *ActiveTest) error {
 	// Launch per-expectation timeout goroutines.
 	for api, exps := range active.Expectations {
 		for _, exp := range exps {
-			go func(apiName string, e *Expectation) {
-				timer := time.NewTimer(e.Deadline)
+			go func(apiName string, exp *Expectation) {
+				timer := time.NewTimer(exp.Deadline)
 				defer timer.Stop()
 				select {
 				case <-timer.C:
-					active.MarkFulfilled(apiName, e.Index,
-						fmt.Errorf("timed out after %s waiting for expected request", e.Deadline))
+					// Live multi-round flows that matched at least one
+					// request but never consumed the full MaxCalls budget
+					// ended normally (fewer rounds than budgeted): grade
+					// the stored final response instead of failing. The
+					// evalDeadline path fulfills (or fails) the expectation
+					// with the real verdict.
+					if exp.MaxCalls > 1 && exp.RequiresEval {
+						if lastPayload, ok := active.FinalLiveResponse(apiName, exp.Index); ok {
+							e.evalDeadline(exp, apiName, active, lastPayload)
+							return
+						}
+					}
+					active.MarkFulfilled(apiName, exp.Index,
+						fmt.Errorf("timed out after %s waiting for expected request", exp.Deadline))
 				case <-active.done:
 				case <-ctx.Done():
 				}

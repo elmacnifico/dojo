@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/elmacnifico/dojo/internal/workspace"
 	"github.com/elmacnifico/dojo/pkg/dojo"
@@ -421,10 +422,21 @@ func (e *Engine) ProcessResponse(protocol, matchedID, apiName string, reqPayload
 					exp, act))
 			}
 		} else if unfulfilled := activeTest.FirstUnfulfilled(apiName); unfulfilled != nil && unfulfilled.RequiresEval {
-			payloadCopy := make([]byte, len(respPayload))
-			copy(payloadCopy, respPayload)
-			go e.evalAndMark(activeTest, apiName, unfulfilled.Index, payloadCopy)
-		}
+			// Multi-round live flows (MaxCalls > 1) must be evaluated on the
+			// FINAL response, not the first: intermediate rounds carry
+			// tool-call payloads that would fail evaluation spuriously.
+			// RecordLiveResponse defers evaluation until the last allowed
+			// call; a quiet window after the last response (no further
+			// rounds) evaluates the stored final payload; the deadline
+			// handler is the final backstop.
+			_, readyNow, gen := activeTest.RecordLiveResponse(apiName, unfulfilled.Index, respPayload)
+			if readyNow {
+				payloadCopy := make([]byte, len(respPayload))
+				copy(payloadCopy, respPayload)
+				go e.evalAndMark(activeTest, apiName, unfulfilled.Index, payloadCopy)
+			} else {
+				e.armQuietEvaluation(activeTest, apiName, unfulfilled.Index, gen)
+			}		}
 	}
 }
 
@@ -438,6 +450,36 @@ func (e *Engine) evalAndMark(activeTest *ActiveTest, apiName string, idx int, pa
 		}
 	}
 	activeTest.MarkFulfilled(apiName, idx, checkErr)
+}
+
+// quietEvalWindow is how long the engine waits, after the most recent live
+// response of a multi-round flow, before deciding the flow has ended and
+// grading the stored final payload. Round gaps in tool loops are sub-second
+// to a few seconds on slow reasoning models (the SUT fires the next request
+// as soon as a response arrives), so ~8s of silence reliably indicates
+// end-of-flow while keeping tests fast.
+const quietEvalWindow = 8 * time.Second
+
+// armQuietEvaluation schedules end-of-flow evaluation for a multi-round live
+// expectation. Each call supersedes previous timers for the same expectation
+// via the LiveResponseGen guard: only the timer armed for the NEWEST response
+// survives to claim the final evaluation. When the window passes with no
+// further rounds, the stored last response is graded.
+func (e *Engine) armQuietEvaluation(activeTest *ActiveTest, apiName string, idx int, gen int) {
+	go func() {
+		timer := time.NewTimer(quietEvalWindow)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			payload, ok := activeTest.ClaimFinalEvaluation(apiName, idx, gen)
+			if !ok {
+				return // newer response arrived; its timer owns the payload
+			}
+			e.evalAndMark(activeTest, apiName, idx, payload)
+		case <-activeTest.done:
+		case <-activeTest.Ctx.Done():
+		}
+	}()
 }
 
 // pgResponseCheck parses raw pgproto3 backend response bytes and returns

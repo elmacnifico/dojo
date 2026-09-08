@@ -20,6 +20,14 @@ type Expectation struct {
 	Deadline     time.Duration
 	MaxCalls     int
 	MatchCount   int
+
+	// Live multi-round flows (MaxCalls > 1 + Evaluate Response): store the
+	// most recent upstream response so evaluation can run once on the final
+	// payload — either when the call budget is consumed, when a quiet window
+	// passes with no further rounds (the normal end-of-flow signal), or when
+	// the expectation deadline expires with fewer calls than budgeted.
+	LastLiveResponse []byte
+	LiveResponseGen int // bumped on every recorded response; guards quiet timers
 }
 
 // ActiveTest represents a currently executing test within the Suite.
@@ -124,6 +132,81 @@ func (a *ActiveTest) FirstUnfulfilled(apiName string) *Expectation {
 		}
 	}
 	return nil
+}
+
+// RecordLiveResponse stores the latest upstream response payload for a
+// live-API expectation and reports whether AI evaluation should run on it now.
+// For single-call expectations (MaxCalls <= 1) evaluation runs immediately.
+// For multi-round flows (MaxCalls > 1), evaluation is deferred until the
+// final allowed call — earlier round responses (e.g. intermediate tool calls)
+// must not be graded as the final agent output.
+func (a *ActiveTest) RecordLiveResponse(apiName string, idx int, payload []byte) (expectation *Expectation, readyNow bool, gen int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	exps := a.Expectations[apiName]
+	if idx < 0 || idx >= len(exps) {
+		return nil, false, 0
+	}
+	exp := exps[idx]
+	if exp.Fulfilled {
+		return nil, false, 0
+	}
+	payloadCopy := make([]byte, len(payload))
+	copy(payloadCopy, payload)
+	exp.LastLiveResponse = payloadCopy
+	exp.LiveResponseGen++
+	gen = exp.LiveResponseGen
+
+	if exp.MaxCalls <= 1 {
+		return exp, true, gen
+	}
+	// Multi-round: evaluate only when this response is at the last allowed
+	// call. MatchCount increments on evaluation (MarkFulfilled), so the
+	// budget check uses MatchCount+1 — the call this response belongs to.
+	return exp, exp.MatchCount+1 >= exp.MaxCalls, gen
+}
+
+// ClaimFinalEvaluation atomically claims the right to run the final AI
+// evaluation for a multi-round live expectation. The quiet-window timer and
+// the MaxCalls budget path can both reach the claim point; only the first
+// wins. The gen argument is the LiveResponseGen observed when the claimant
+// decided to act; a mismatch means a newer response arrived in the meantime
+// and the claimant must stand down (a newer quiet window owns the payload).
+func (a *ActiveTest) ClaimFinalEvaluation(apiName string, idx int, gen int) (payload []byte, ok bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	exps := a.Expectations[apiName]
+	if idx < 0 || idx >= len(exps) {
+		return nil, false
+	}
+	exp := exps[idx]
+	if exp.Fulfilled || exp.LiveResponseGen != gen || len(exp.LastLiveResponse) == 0 {
+		return nil, false
+	}
+	payloadCopy := make([]byte, len(exp.LastLiveResponse))
+	copy(payloadCopy, exp.LastLiveResponse)
+	return payloadCopy, true
+}
+
+// FinalLiveResponse returns the stored last response payload for an
+// unfulfilled live-API expectation that has matched at least once. Used by
+// the deadline handler to grade the final payload of flows that end with
+// fewer rounds than the MaxCalls budget (the normal case: models rarely
+// exhaust the full budget).
+func (a *ActiveTest) FinalLiveResponse(apiName string, idx int) ([]byte, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	exps := a.Expectations[apiName]
+	if idx < 0 || idx >= len(exps) {
+		return nil, false
+	}
+	exp := exps[idx]
+	if len(exp.LastLiveResponse) == 0 {
+		return nil, false
+	}
+	payloadCopy := make([]byte, len(exp.LastLiveResponse))
+	copy(payloadCopy, exp.LastLiveResponse)
+	return payloadCopy, true
 }
 
 // buildExpectations populates at.Expectations from parsed Expect lines. Each
