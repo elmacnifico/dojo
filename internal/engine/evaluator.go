@@ -98,10 +98,10 @@ func (a *AIEvaluator) Evaluate(ctx context.Context, actual []byte, expectedRule 
 
 // llmRequest holds the parameters needed to make a provider-specific LLM API call.
 type llmRequest struct {
-	provider   string
-	defaultURL string
-	body       map[string]any
-	setAuth    func(req *http.Request)
+	provider    string
+	defaultURL  string
+	body        map[string]any
+	setAuth     func(req *http.Request)
 	extractText func(body []byte) (string, error)
 }
 

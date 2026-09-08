@@ -27,6 +27,9 @@ func TestValidateAPIConfig(t *testing.T) {
 		{"mock url with domain", APIConfig{Mode: "mock", URL: "https://api.example.com"}, true, "mock but URL contains a domain"},
 		{"mock path only url", APIConfig{Mode: "mock", URL: "/v1/charge"}, false, ""},
 		{"mock empty url", APIConfig{Mode: "mock", URL: ""}, false, ""},
+		{"invalid timeout format", APIConfig{Mode: "live", URL: "https://api.example.com", Timeout: "30sec"}, true, "invalid timeout"},
+		{"zero timeout format", APIConfig{Mode: "live", URL: "https://api.example.com", Timeout: "0s"}, false, ""},
+		{"negative timeout", APIConfig{Mode: "live", URL: "https://api.example.com", Timeout: "-5s"}, true, "must not be negative"},
 	}
 
 	for _, tc := range cases {

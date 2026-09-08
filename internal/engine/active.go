@@ -110,8 +110,12 @@ func (a *ActiveTest) MarkFulfilled(apiName string, idx int, err error) {
 }
 
 // FirstUnfulfilled returns the first unfulfilled expectation for the given API,
-// or nil if all are fulfilled or the API has no expectations.
+// or nil if all are fulfilled or the API has no expectations. It takes a.mu so
+// concurrent MarkFulfilled calls (from proxy goroutines) cannot race with the
+// Fulfilled reads.
 func (a *ActiveTest) FirstUnfulfilled(apiName string) *Expectation {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	for _, exp := range a.Expectations[apiName] {
 		if !exp.Fulfilled {
 			return exp

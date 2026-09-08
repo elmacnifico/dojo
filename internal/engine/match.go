@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
 	"reflect"
-	"text/template"
+	"sort"
 	"strings"
+	"text/template"
 
 	"github.com/elmacnifico/dojo/internal/workspace"
 	"github.com/elmacnifico/dojo/pkg/dojo"

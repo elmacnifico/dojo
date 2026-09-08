@@ -42,7 +42,7 @@ type ExpectationSpec struct {
 // APIConfig controls the mode and URL behavior for an outbound SUT dependency.
 type APIConfig struct {
 	Protocol         string            `json:"protocol,omitempty" yaml:"protocol,omitempty"` // "http", "postgres" (defaults to "http")
-	Mode             string            `json:"mode,omitempty" yaml:"mode,omitempty"`     // "mock" or "live"
+	Mode             string            `json:"mode,omitempty" yaml:"mode,omitempty"`         // "mock" or "live"
 	Timeout          string            `json:"timeout" yaml:"timeout"`
 	URL              string            `json:"url" yaml:"url"`
 	Headers          map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"` // For API keys via env vars
@@ -87,9 +87,9 @@ func (e EntrypointConfig) HTTPMethod() string {
 
 // EvaluatorConfig holds the rules for AI evaluation.
 type EvaluatorConfig struct {
-	Provider  string `json:"provider" yaml:"provider"`      // "gemini", "openai", "anthropic"
-	Model     string `json:"model" yaml:"model"`         // e.g., "gemini-1.5-flash", "gpt-4"
-	APIKeyEnv string `json:"api_key_env" yaml:"api_key_env"`   // e.g., "GEMINI_API_KEY"
+	Provider  string `json:"provider" yaml:"provider"`           // "gemini", "openai", "anthropic"
+	Model     string `json:"model" yaml:"model"`                 // e.g., "gemini-1.5-flash", "gpt-4"
+	APIKeyEnv string `json:"api_key_env" yaml:"api_key_env"`     // e.g., "GEMINI_API_KEY"
 	URL       string `json:"url,omitempty" yaml:"url,omitempty"` // For custom/local endpoints
 }
 
@@ -177,15 +177,15 @@ type DojoConfig struct {
 	// SutCommand, when non-empty, starts the SUT as a child process before tests run. The engine
 	// then waits until the first HTTP entrypoint's TCP listen address accepts connections (host:port
 	// from the entrypoint URL, or 127.0.0.1:8080 when that URL is empty).
-	SutCommand string           `json:"sut_command,omitempty" yaml:"sut_command,omitempty"`
-	SutBaseURL string           `json:"sut_base_url,omitempty" yaml:"sut_base_url,omitempty"`
+	SutCommand string `json:"sut_command,omitempty" yaml:"sut_command,omitempty"`
+	SutBaseURL string `json:"sut_base_url,omitempty" yaml:"sut_base_url,omitempty"`
 	// StrictDuplicateExpects, when true, runs duplicate expected-request detection
 	// even if concurrency is 1, so ambiguous cross-test fixtures are caught early.
-	StrictDuplicateExpects bool `json:"strict_duplicate_expects,omitempty" yaml:"strict_duplicate_expects,omitempty"`
-	Evaluator  *EvaluatorConfig `json:"evaluator,omitempty" yaml:"evaluator,omitempty"`
-	Timeouts   TimeoutConfig    `json:"timeouts,omitempty" yaml:"timeouts,omitempty"`
-	APIs        map[string]APIConfig        `json:"apis,omitempty" yaml:"apis,omitempty"`
-	Entrypoints map[string]EntrypointConfig `json:"entrypoints,omitempty" yaml:"entrypoints,omitempty"`
+	StrictDuplicateExpects bool                        `json:"strict_duplicate_expects,omitempty" yaml:"strict_duplicate_expects,omitempty"`
+	Evaluator              *EvaluatorConfig            `json:"evaluator,omitempty" yaml:"evaluator,omitempty"`
+	Timeouts               TimeoutConfig               `json:"timeouts,omitempty" yaml:"timeouts,omitempty"`
+	APIs                   map[string]APIConfig        `json:"apis,omitempty" yaml:"apis,omitempty"`
+	Entrypoints            map[string]EntrypointConfig `json:"entrypoints,omitempty" yaml:"entrypoints,omitempty"`
 }
 
 // Test holds a distinct test configuration mapped by its folder.
@@ -234,15 +234,15 @@ type LLMUsage struct {
 
 // TestResult captures the outcome of a single test execution.
 type TestResult struct {
-	TestName        string             `json:"test_name" yaml:"test_name"`
-	Status          string             `json:"status" yaml:"status"` // "pass" or "fail"
-	DurationMs      int64              `json:"duration_ms" yaml:"duration_ms"`
-	Reason          string             `json:"reason,omitempty" yaml:"reason,omitempty"`
-	Expected        string             `json:"expected,omitempty" yaml:"expected,omitempty"`
-	Actual          string             `json:"actual,omitempty" yaml:"actual,omitempty"`
-	LLMUsage        *LLMUsage          `json:"llm_usage,omitempty" yaml:"llm_usage,omitempty"`
+	TestName        string              `json:"test_name" yaml:"test_name"`
+	Status          string              `json:"status" yaml:"status"` // "pass" or "fail"
+	DurationMs      int64               `json:"duration_ms" yaml:"duration_ms"`
+	Reason          string              `json:"reason,omitempty" yaml:"reason,omitempty"`
+	Expected        string              `json:"expected,omitempty" yaml:"expected,omitempty"`
+	Actual          string              `json:"actual,omitempty" yaml:"actual,omitempty"`
+	LLMUsage        *LLMUsage           `json:"llm_usage,omitempty" yaml:"llm_usage,omitempty"`
 	LLMUsageByAPI   map[string]LLMUsage `json:"llm_usage_by_api,omitempty" yaml:"llm_usage_by_api,omitempty"`
-	LLMUsageDerived *LLMUsageDerived   `json:"llm_usage_derived,omitempty" yaml:"llm_usage_derived,omitempty"`
+	LLMUsageDerived *LLMUsageDerived    `json:"llm_usage_derived,omitempty" yaml:"llm_usage_derived,omitempty"`
 }
 
 // TestFailure captures a failed assertion during test execution.
@@ -300,6 +300,35 @@ func LoadWorkspace(baseDir string) (*Workspace, error) {
 		}
 	}
 
+	return ws, nil
+}
+
+// LoadWorkspaceSuite loads only the named suite from the workspace directory.
+// Unlike [LoadWorkspace], sibling suite directories are neither discovered nor
+// validated, so an invalid configuration in another suite cannot block running
+// the suite that was requested.
+func LoadWorkspaceSuite(baseDir, suiteName string) (*Workspace, error) {
+	ws := &Workspace{
+		BaseDir: baseDir,
+		Suites:  make(map[string]*Suite),
+	}
+
+	// Read Global Eval
+	if b, err := os.ReadFile(filepath.Join(baseDir, "eval.md")); err == nil {
+		ws.GlobalEval = strings.TrimSpace(string(b))
+	}
+
+	suitePath := filepath.Join(baseDir, suiteName)
+	configPath := filepath.Join(suitePath, "dojo.yaml")
+	if _, err := os.Stat(configPath); err != nil {
+		return nil, fmt.Errorf("suite '%s' not found in workspace '%s': %w", suiteName, baseDir, err)
+	}
+
+	suite, err := loadSuite(ws, suitePath, suiteName)
+	if err != nil {
+		return nil, err
+	}
+	ws.Suites[suiteName] = suite
 	return ws, nil
 }
 
@@ -804,6 +833,15 @@ func validateSuiteConfig(suiteName string, cfg *DojoConfig) error {
 func validateAPIConfig(name string, cfg *APIConfig) error {
 	if cfg.Protocol == "" {
 		cfg.Protocol = "http"
+	}
+	if cfg.Timeout != "" {
+		d, err := time.ParseDuration(cfg.Timeout)
+		if err != nil {
+			return fmt.Errorf("API %s has invalid timeout %q (must be a Go duration like \"30s\" or \"500ms\"): %w", name, cfg.Timeout, err)
+		}
+		if d < 0 {
+			return fmt.Errorf("API %s timeout must not be negative, got %s", name, cfg.Timeout)
+		}
 	}
 	if cfg.Mode == "live" {
 		if cfg.URL == "" {

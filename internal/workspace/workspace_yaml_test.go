@@ -39,12 +39,10 @@ func TestDurationUnmarshalYAML(t *testing.T) {
 	}
 }
 
-
-
 func TestLoadYAML(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "test.yaml")
-	
+
 	// Valid YAML
 	os.WriteFile(path, []byte("concurrency: 5"), 0644)
 	var cfg DojoConfig

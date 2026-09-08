@@ -190,7 +190,7 @@ func main() {
 
 	engine.LoadSuiteEnvFiles(suiteDir)
 
-	ws, err := workspace.LoadWorkspace(workspaceDir)
+	ws, err := workspace.LoadWorkspaceSuite(workspaceDir, suiteName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load workspace: %v\n", err)
 		exitCode = 1

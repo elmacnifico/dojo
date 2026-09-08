@@ -1,7 +1,11 @@
 package engine
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -102,8 +106,6 @@ func TestAwaitPhaseExpectations_Timeout(t *testing.T) {
 	}
 }
 
-
-
 func TestReadPlanFixture(t *testing.T) {
 	tmpDir := t.TempDir()
 	testDir := filepath.Join(tmpDir, "test_foo")
@@ -115,7 +117,7 @@ func TestReadPlanFixture(t *testing.T) {
 	// Test fallback to suite dir
 	suiteFile := filepath.Join(suiteDir, "query.sql")
 	os.WriteFile(suiteFile, []byte("SELECT * FROM users"), 0644)
-	
+
 	b, err := workspace.ReadPlanFixture(testDir, suiteDir, "query.sql")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -127,7 +129,7 @@ func TestReadPlanFixture(t *testing.T) {
 	// Test primary dir wins
 	testFile := filepath.Join(testDir, "query.sql")
 	os.WriteFile(testFile, []byte("SELECT 1"), 0644)
-	
+
 	b, err = workspace.ReadPlanFixture(testDir, suiteDir, "query.sql")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -143,11 +145,45 @@ func TestReadPlanFixture(t *testing.T) {
 	}
 }
 
+func TestTriggerEntrypoint_StatusMismatchNoStdout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	suite := &workspace.Suite{
+		Config: workspace.DojoConfig{
+			Timeouts: workspace.TimeoutConfig{Perform: workspace.Duration{Duration: 2 * time.Second}},
+		},
+	}
+	e := NewEngine(&workspace.Workspace{})
+	ep := workspace.EntrypointConfig{Type: "http", Path: "/trigger", URL: srv.URL}
+
+	// Capture stdout during the trigger so we can prove no debug output leaks.
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	triggerErr := e.triggerEntrypoint(context.Background(), suite, ep, nil, 200)
+	w.Close()
+	os.Stdout = orig
+
+	out, _ := io.ReadAll(r)
+	if len(bytes.TrimSpace(out)) != 0 {
+		t.Errorf("expected no stdout output on status mismatch, got %q", string(out))
+	}
+	if triggerErr == nil {
+		t.Fatal("expected a MismatchError from status mismatch, got nil")
+	}
+}
+
 func TestExecutePostgresPerform_MissingQuery(t *testing.T) {
 	e := NewEngine(&workspace.Workspace{})
 	line := workspace.ParsedLine{
-		Action: "Perform",
-		Target: "postgres",
+		Action:  "Perform",
+		Target:  "postgres",
 		Clauses: []workspace.ParsedClause{},
 	}
 	err := e.executePostgresPerform(context.Background(), nil, line, "/tmp", "/tmp", "")

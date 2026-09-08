@@ -1349,7 +1349,7 @@ func TestProcessResponse_HTTPLiveEvalFailsWithoutConfig(t *testing.T) {
 	eng.Registry.Register("t1", active)
 
 	eng.ProcessResponse("http", "t1", "gemini", nil, []byte(`{"candidates":[{"content":"response"}]}`))
-	
+
 	// Wait for async evalAndMark to complete
 	time.Sleep(100 * time.Millisecond)
 

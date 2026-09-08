@@ -47,10 +47,10 @@ type geminiSafetySetting struct {
 	Threshold string `json:"threshold"`
 }
 type geminiReq struct {
-	Contents          []geminiContent        `json:"contents"`
+	Contents          []geminiContent         `json:"contents"`
 	SystemInstruction geminiSystemInstruction `json:"systemInstruction"`
 	GenerationConfig  geminiGenerationConfig  `json:"generationConfig"`
-	SafetySettings    []geminiSafetySetting  `json:"safetySettings"`
+	SafetySettings    []geminiSafetySetting   `json:"safetySettings"`
 }
 
 func buildGeminiRequest(userID, message string) []byte {
@@ -347,7 +347,6 @@ Expect -> whatsapp -> Request: whatsapp_request.json
 	}
 
 	eng := engine.NewEngine(ws)
-
 
 	if _, err := eng.StartProxies(ctx, "suite"); err != nil {
 		t.Fatalf("start proxies: %v", err)

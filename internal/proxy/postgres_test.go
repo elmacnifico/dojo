@@ -107,7 +107,6 @@ apis:
 
 	eng := engine.NewEngine(ws)
 
-
 	if _, err := eng.StartProxies(ctx, "test_suite"); err != nil {
 		t.Fatalf("Failed to start proxies: %v", err)
 	}
@@ -177,7 +176,6 @@ apis:
 		t.Fatalf("Failed to load workspace 2: %v", err)
 	}
 	eng2 := engine.NewEngine(ws2)
-
 
 	if _, err := eng2.StartProxies(ctx, "test_suite"); err != nil {
 		t.Fatalf("Failed to start proxies 2: %v", err)

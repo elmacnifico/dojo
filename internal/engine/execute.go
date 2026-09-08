@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"text/template"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/elmacnifico/dojo/internal/workspace"
@@ -116,7 +116,7 @@ func (e *Engine) prepareEntrypoint(ctx context.Context, id string, test *workspa
 		APIUsage:     make(map[string]workspace.LLMUsage),
 		done:         make(chan struct{}),
 	}
-	
+
 	if len(payload) > 0 {
 		var vars map[string]any
 		if err := json.Unmarshal(payload, &vars); err == nil {
@@ -286,7 +286,6 @@ func (e *Engine) triggerEntrypoint(ctx context.Context, suite *workspace.Suite, 
 
 		if expectStatus != 0 {
 			if resp.StatusCode != expectStatus {
-				fmt.Printf("triggerEntrypoint got %d from %s\n", resp.StatusCode, req.URL.String())
 				return &MismatchError{
 					Reason:   fmt.Sprintf("expected HTTP status %d, got %d", expectStatus, resp.StatusCode),
 					Expected: strconv.Itoa(expectStatus),

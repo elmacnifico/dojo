@@ -23,7 +23,8 @@ func (f *failingMatchTable) ProcessRequest(protocol, apiName string, reqPayload 
 	return dojo.MatchResult{Err: fmt.Errorf("injected match failure")}
 }
 
-func (f *failingMatchTable) ProcessResponse(protocol, matchedID, apiName string, reqPayload []byte, respPayload []byte) {}
+func (f *failingMatchTable) ProcessResponse(protocol, matchedID, apiName string, reqPayload []byte, respPayload []byte) {
+}
 
 func TestHTTPProxy(t *testing.T) {
 	realAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +68,7 @@ func TestHTTPProxy(t *testing.T) {
 
 	eng := engine.NewEngine(ws)
 	eng.ActiveSuite = ws.Suites["test"]
-	
+
 	activeTest := &engine.ActiveTest{
 		ID:    "test_123",
 		Test:  ws.Suites["test"].Tests["test_123"],
@@ -99,7 +100,7 @@ func TestHTTPProxy(t *testing.T) {
 	if string(mockBody) != `{"mocked": true}` {
 		t.Errorf("Expected mocked response, got: %s", string(mockBody))
 	}
-	
+
 	if !activeTest.Expectations["mockAPI"][0].Fulfilled {
 		t.Errorf("Expected mockAPI expectation to be fulfilled")
 	}

@@ -20,12 +20,12 @@ func TestAIEvaluator(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		provider      string
-		mockResp      string
-		expectedPass  bool
+		name           string
+		provider       string
+		mockResp       string
+		expectedPass   bool
 		expectedReason string
-		expectErr     bool
+		expectErr      bool
 	}{
 		{
 			name:     "Valid JSON passing OpenAI",
@@ -37,7 +37,7 @@ func TestAIEvaluator(t *testing.T) {
 					}
 				}]
 			}`,
-			expectedPass:  true,
+			expectedPass:   true,
 			expectedReason: "matches perfectly",
 		},
 		{
@@ -52,13 +52,13 @@ func TestAIEvaluator(t *testing.T) {
 					}
 				}]
 			}`,
-			expectedPass:  false,
+			expectedPass:   false,
 			expectedReason: "missing field 'id'",
 		},
 		{
-			name:      "Invalid JSON response Anthropic",
-			provider:  "anthropic",
-			mockResp:  `{
+			name:     "Invalid JSON response Anthropic",
+			provider: "anthropic",
+			mockResp: `{
 				"content": [{
 					"text": "This looks fine to me, but I didn't format it as JSON."
 				}]

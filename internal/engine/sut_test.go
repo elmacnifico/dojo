@@ -37,8 +37,6 @@ func TestLoadSuiteEnvFiles_MissingFiles(t *testing.T) {
 	// Should not panic
 }
 
-
-
 func TestPrefixWriter(t *testing.T) {
 	var buf bytes.Buffer
 	pw := newPrefixWriter(&buf, "[SUT] ")

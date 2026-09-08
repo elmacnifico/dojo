@@ -67,8 +67,8 @@ func TestReconcileSummaryForSeeding_NoPassesOnlySeedFailure(t *testing.T) {
 			{TestName: "only", Status: "fail", Reason: first.Error()},
 		},
 		Failures: []workspace.TestFailure{{TestName: "only", Reason: first.Error()}},
-		Passed:    0,
-		Failed:    1,
+		Passed:   0,
+		Failed:   1,
 	}
 	reconcileSummaryForSeeding(summary, first)
 	if summary.Failed != 1 || len(summary.Failures) != 1 {

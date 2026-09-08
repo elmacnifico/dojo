@@ -2,12 +2,12 @@ package reporter_test
 
 import (
 	"encoding/json"
+	"github.com/elmacnifico/dojo/internal/reporter"
+	"github.com/elmacnifico/dojo/internal/workspace"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"github.com/elmacnifico/dojo/internal/workspace"
-	"github.com/elmacnifico/dojo/internal/reporter"
 )
 
 func TestReporter(t *testing.T) {

@@ -9,19 +9,19 @@ func TestLLMUsage_Add(t *testing.T) {
 	t.Parallel()
 	var a LLMUsage
 	a.Add(LLMUsage{
-		PromptTokens:               10,
-		CompletionTokens:           5,
-		TotalTokens:                15,
-		CachedPromptTokens:         3,
-		CacheReadInputTokens:       1,
-		CacheCreationInputTokens:   2,
-		ReasoningTokens:            4,
-		ThoughtsTokens:             6,
-		ToolUsePromptTokens:        7,
-		AudioPromptTokens:          1,
-		AudioCompletionTokens:      2,
-		AcceptedPredictionTokens:   8,
-		RejectedPredictionTokens:   9,
+		PromptTokens:             10,
+		CompletionTokens:         5,
+		TotalTokens:              15,
+		CachedPromptTokens:       3,
+		CacheReadInputTokens:     1,
+		CacheCreationInputTokens: 2,
+		ReasoningTokens:          4,
+		ThoughtsTokens:           6,
+		ToolUsePromptTokens:      7,
+		AudioPromptTokens:        1,
+		AudioCompletionTokens:    2,
+		AcceptedPredictionTokens: 8,
+		RejectedPredictionTokens: 9,
 	})
 	a.Add(LLMUsage{PromptTokens: 1, CachedPromptTokens: 2})
 	if a.PromptTokens != 11 || a.CachedPromptTokens != 5 {

@@ -32,9 +32,9 @@ type Document struct {
 // Line represents a single action/expectation in the DSL. Clauses are optional;
 // a bare Expect -> name registers the expectation without constraints.
 type Line struct {
-	Action  string    `parser:"@Ident Arrow"`
-	TargetParts []string `parser:"@Ident+"`
-	Clauses []*Clause `parser:"(Arrow @@ (Arrow @@)*)?"`
+	Action      string    `parser:"@Ident Arrow"`
+	TargetParts []string  `parser:"@Ident+"`
+	Clauses     []*Clause `parser:"(Arrow @@ (Arrow @@)*)?"`
 }
 
 // Clause represents key-value pairs (e.g., Payload: file.json).

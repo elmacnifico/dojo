@@ -1,7 +1,5 @@
 package workspace
 
-
-
 import (
 	"bytes"
 	"fmt"

@@ -16,7 +16,7 @@ func TestLoadWorkspace(t *testing.T) {
 
 	testutil.CreateFile(t, tmpDir, "eval.md", "Global Eval Rule")
 	testutil.CreateFile(t, tmpDir, "tests/eval.md", "Suite Eval Rule")
-	
+
 	testutil.CreateFile(t, tmpDir, "tests/dojo.yaml", `
 concurrency: 1
 apis:
@@ -47,7 +47,7 @@ entrypoints:
 `)
 	testutil.CreateFile(t, tmpDir, "tests/whatsapp_req.json", `{"message": "hello"}`)
 	testutil.CreateFile(t, tmpDir, "tests/whatsapp_resp.json", `{"status": "ok"}`)
-	
+
 	testutil.CreateFile(t, tmpDir, "tests/test_001/test.plan", `
 Perform -> entrypoints/webhook -> Payload: incoming.json
 Expect -> gemini -> Payload: request.json -> Evaluate Response
@@ -65,10 +65,10 @@ apis:
     url: "/v1/gemini"
 `)
 	testutil.CreateFile(t, tmpDir, "tests/test_001/eval.md", "+\nTest Eval Rule")
-	
+
 	testutil.CreateFile(t, tmpDir, "tests/test_002/test.plan", "Perform -> entrypoints/webhook -> Payload: in.json")
 	testutil.CreateFile(t, tmpDir, "tests/test_002/eval.md", "Override Rule")
-	
+
 	testutil.CreateFile(t, tmpDir, "tests/test_003/test.plan", "Perform -> entrypoints/webhook -> Payload: in.json")
 
 	t.Setenv("ENV_API_HOST", "api.gemini.com")
@@ -116,14 +116,14 @@ apis:
 	if !ok {
 		t.Fatalf("Expected test_001 to be loaded")
 	}
-	
+
 	if test.APIs["gemini"].Timeout != "10s" {
 		t.Errorf("Expected test override timeout 10s, got %s", test.APIs["gemini"].Timeout)
 	}
 	if test.APIs["gemini"].Mode != "mock" {
 		t.Errorf("Expected test override mode 'mock', got %s", test.APIs["gemini"].Mode)
 	}
-	
+
 	expectedEval1 := "Suite Eval Rule\nTest Eval Rule"
 	if test.Eval != expectedEval1 {
 		t.Errorf("Expected appended eval %q, got %q", expectedEval1, test.Eval)
@@ -354,6 +354,69 @@ func payloadStr2(dr *workspace.DefaultResponse) string {
 	return string(dr.Payload)
 }
 
+func TestLoadWorkspaceSuite_SkipsSiblingSuites(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+
+	// Broken sibling suite: invalid API mode must NOT block loading the target.
+	testutil.CreateFile(t, tmpDir, "broken/dojo.yaml", `
+concurrency: 1
+apis:
+  api:
+    mode: passthrough
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+`)
+	testutil.CreateFile(t, tmpDir, "broken/test_001/test.plan", "Perform -> entrypoints/webhook")
+
+	// Target suite: valid config.
+	testutil.CreateFile(t, tmpDir, "good/dojo.yaml", `
+concurrency: 1
+apis:
+  gemini:
+    mode: mock
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+`)
+	testutil.CreateFile(t, tmpDir, "good/test_001/test.plan", "Perform -> entrypoints/webhook -> Expect -> gemini")
+
+	ws, err := workspace.LoadWorkspaceSuite(tmpDir, "good")
+	if err != nil {
+		t.Fatalf("LoadWorkspaceSuite must not fail on broken sibling suite: %v", err)
+	}
+	if _, ok := ws.Suites["good"]; !ok {
+		t.Fatal("expected suite 'good' to be loaded")
+	}
+	if _, ok := ws.Suites["broken"]; ok {
+		t.Fatal("expected suite 'broken' not to be loaded")
+	}
+}
+
+func TestLoadWorkspaceSuite_UnknownSuite(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+
+	testutil.CreateFile(t, tmpDir, "good/dojo.yaml", `
+concurrency: 1
+apis:
+  gemini:
+    mode: mock
+entrypoints:
+  webhook:
+    type: http
+    path: "/trigger"
+`)
+	testutil.CreateFile(t, tmpDir, "good/test_001/test.plan", "Perform -> entrypoints/webhook -> Expect -> gemini")
+
+	if _, err := workspace.LoadWorkspaceSuite(tmpDir, "missing"); err == nil {
+		t.Fatal("expected error for unknown suite name")
+	}
+}
+
 func TestLoadWorkspace_TestLevelAPIFileResolution(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
@@ -493,4 +556,3 @@ entrypoints:
 		t.Errorf("X-Sig not merged: got %q", overrideEP.Headers["X-Sig"])
 	}
 }
-

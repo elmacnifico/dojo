@@ -2,11 +2,43 @@ package engine
 
 import (
 	"testing"
+	"time"
 
 	"github.com/elmacnifico/dojo/internal/workspace"
 
 	"github.com/jackc/pgproto3/v2"
 )
+
+func TestFirstUnfulfilled_ConcurrentWithMarkFulfilled(t *testing.T) {
+	t.Parallel()
+	at := &ActiveTest{
+		ID: "race_test",
+		Expectations: map[string][]*Expectation{
+			"api1": {
+				{Target: "api1", Index: 0, Deadline: time.Minute},
+				{Target: "api1", Index: 1, Deadline: time.Minute},
+			},
+		},
+		done: make(chan struct{}),
+	}
+
+	// One goroutine mutates Fulfilled via MarkFulfilled while another reads it
+	// via FirstUnfulfilled. Without locking in FirstUnfulfilled this is a data
+	// race that the -race detector must catch.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 100; i++ {
+			at.MarkFulfilled("api1", i%2, nil)
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		if exp := at.FirstUnfulfilled("api1"); exp != nil && exp.Index > 1 {
+			t.Fatalf("unexpected index %d", exp.Index)
+		}
+	}
+	<-done
+}
 
 func TestPgResponseCheck_ReadyForQuery(t *testing.T) {
 	t.Parallel()
@@ -181,15 +213,15 @@ func TestParseUsage(t *testing.T) {
 			name:    "OpenAI with details",
 			payload: []byte(`{"usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120, "prompt_tokens_details": {"cached_tokens": 40, "audio_tokens": 3}, "completion_tokens_details": {"reasoning_tokens": 5, "audio_tokens": 2, "accepted_prediction_tokens": 1, "rejected_prediction_tokens": 2}}}`),
 			want: workspace.LLMUsage{
-				PromptTokens:               100,
-				CompletionTokens:           20,
-				TotalTokens:                120,
-				CachedPromptTokens:         40,
-				AudioPromptTokens:          3,
-				ReasoningTokens:            5,
-				AudioCompletionTokens:      2,
-				AcceptedPredictionTokens:   1,
-				RejectedPredictionTokens:   2,
+				PromptTokens:             100,
+				CompletionTokens:         20,
+				TotalTokens:              120,
+				CachedPromptTokens:       40,
+				AudioPromptTokens:        3,
+				ReasoningTokens:          5,
+				AudioCompletionTokens:    2,
+				AcceptedPredictionTokens: 1,
+				RejectedPredictionTokens: 2,
 			},
 			wantFound: true,
 		},
@@ -203,11 +235,11 @@ func TestParseUsage(t *testing.T) {
 			name:    "Anthropic with cache",
 			payload: []byte(`{"usage": {"input_tokens": 200, "output_tokens": 30, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 50}}`),
 			want: workspace.LLMUsage{
-				PromptTokens:               200,
-				CompletionTokens:           30,
-				TotalTokens:                230,
-				CacheCreationInputTokens:   100,
-				CacheReadInputTokens:       50,
+				PromptTokens:             200,
+				CompletionTokens:         30,
+				TotalTokens:              230,
+				CacheCreationInputTokens: 100,
+				CacheReadInputTokens:     50,
 			},
 			wantFound: true,
 		},
@@ -215,12 +247,12 @@ func TestParseUsage(t *testing.T) {
 			name:    "Gemini extended",
 			payload: []byte(`{"usageMetadata": {"promptTokenCount": 80, "cachedContentTokenCount": 32, "candidatesTokenCount": 10, "toolUsePromptTokenCount": 7, "thoughtsTokenCount": 3, "totalTokenCount": 100}}`),
 			want: workspace.LLMUsage{
-				PromptTokens:          80,
-				CompletionTokens:      10,
-				TotalTokens:           100,
-				CachedPromptTokens:    32,
-				ToolUsePromptTokens:   7,
-				ThoughtsTokens:        3,
+				PromptTokens:        80,
+				CompletionTokens:    10,
+				TotalTokens:         100,
+				CachedPromptTokens:  32,
+				ToolUsePromptTokens: 7,
+				ThoughtsTokens:      3,
 			},
 			wantFound: true,
 		},
